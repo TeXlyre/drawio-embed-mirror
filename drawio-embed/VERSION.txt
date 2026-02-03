@@ -1,5 +1,5 @@
 Draw.io Embed Mirror
-Synced: 2026-02-03 20:52:40 UTC
-Version: 20260203
-Source: https://embed.diagrams.net
-Mirror: Automated via GitHub Actions with Puppeteer
+Synced: 2026-02-03 20:57:04 UTC
+Version: v29.3.6
+Source: https://github.com/jgraph/drawio
+Mirror: Official drawio repository clone
