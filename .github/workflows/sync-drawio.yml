@@ -26,7 +26,7 @@ jobs:
       - name: Install Puppeteer
         run: npm install puppeteer
 
-      - name: Download Light Theme
+      - name: Download both themes
         run: |
           cat > download.js << 'EOF'
           const puppeteer = require('puppeteer');
@@ -75,30 +75,19 @@ jobs:
               }
             });
 
-            const url = `${BASE}/?embed=1&proto=json&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1&stealth=1&offline=1&ui=${THEME}`;
-            console.log(`Loading Draw.io with ${THEME} theme...`);
-            console.log(`URL: ${url}`);
+            const url = `${BASE}/?embed=1&ui=${THEME}&proto=json&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1`;
+            console.log(`\nLoading: ${url}\n`);
             
             await page.goto(url, {
               waitUntil: 'networkidle0',
               timeout: 120000
             });
 
-            console.log('Waiting for dynamic loads...');
             await new Promise(resolve => setTimeout(resolve, 15000));
 
             await browser.close();
 
             console.log(`\n${THEME}: Downloaded ${downloaded.size} files`);
-            
-            fs.writeFileSync(
-              path.join(outDir, 'manifest.json'),
-              JSON.stringify({ 
-                theme: THEME,
-                synced: new Date().toISOString(),
-                files: downloaded.size 
-              }, null, 2)
-            );
 
             process.exit(0);
           })().catch(err => {
@@ -107,69 +96,31 @@ jobs:
           });
           EOF
 
+          echo "Downloading light theme..."
           node download.js light
-
-      - name: Download Dark Theme
-        run: |
+          
+          echo ""
+          echo "Downloading dark theme..."
           node download.js dark
-
-      - name: Clean up integration files
-        run: |
-          for theme in light dark; do
-            cd drawio-embed/$theme
-            
-            echo "Cleaning $theme theme..."
-            rm -f cache 2>/dev/null || true
-            rm -f github* 2>/dev/null || true
-            rm -f gitlab* 2>/dev/null || true
-            rm -f dropbox* 2>/dev/null || true
-            rm -f onedrive* 2>/dev/null || true
-            rm -f trello* 2>/dev/null || true
-            rm -f js/dropbox-sdk.min.js 2>/dev/null || true
-            rm -rf integrations/ 2>/dev/null || true
-            
-            find . -name "*\?*" -type f -delete
-            
-            mkdir -p images js styles
-            
-            if [ ! -f "images/manifest.json" ]; then
-              echo '{"version":"mirror"}' > images/manifest.json
-            fi
-            
-            if [ ! -f "js/PreConfig.js" ]; then
-              echo "window.DRAWIO_CONFIG = {};" > js/PreConfig.js
-            fi
-            
-            cd ../..
-          done
-
-      - name: Verify
-        run: |
-          for theme in light dark; do
-            echo "Verifying $theme theme..."
-            FILE_COUNT=$(find drawio-embed/$theme -type f | wc -l)
-            echo "  Files: $FILE_COUNT"
-            
-            [ -f "drawio-embed/$theme/index.html" ] && echo "  ✓ index.html" || echo "  ✗ index.html MISSING"
-            [ -f "drawio-embed/$theme/js/app.min.js" ] && echo "  ✓ app.min.js" || echo "  ✗ app.min.js MISSING"
-            
-            if [ ! -f "drawio-embed/$theme/index.html" ]; then
-              echo "ERROR: $theme/index.html missing"
-              exit 1
-            fi
-            echo ""
-          done
 
       - name: Create version file
         run: |
           cat > drawio-embed/VERSION.txt << EOF
           Draw.io Embed Mirror
           Synced: $(date -u)
-          Themes: light, dark (separate static builds)
-          Light files: $(find drawio-embed/light -type f | wc -l)
-          Dark files: $(find drawio-embed/dark -type f | wc -l)
-          Configuration: embed=1, stealth=1, offline=1, no cloud integrations
+          Light files: $(find drawio-embed/light -type f 2>/dev/null | wc -l)
+          Dark files: $(find drawio-embed/dark -type f 2>/dev/null | wc -l)
           EOF
+
+      - name: Verify
+        run: |
+          for theme in light dark; do
+            if [ ! -f "drawio-embed/$theme/index.html" ]; then
+              echo "ERROR: $theme/index.html missing"
+              exit 1
+            fi
+            echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files)"
+          done
 
       - name: Commit
         run: |
