@@ -1,9 +1,9 @@
 name: Sync Draw.io Embed
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: '0 2 * * 0'
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,56 +15,62 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout this repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Clone drawio-integration
+      - name: Download from embed.diagrams.net
         run: |
-          git clone https://github.com/jgraph/drawio-integration.git temp-drawio
-          
-      - name: Copy files
-        run: |
-          rm -rf drawio-embed
           mkdir -p drawio-embed
+          cd drawio-embed
           
-          cp -r temp-drawio/* drawio-embed/
+          curl -o index.html 'https://embed.diagrams.net/?embed=1&proto=json&spin=1'
           
-          rm -rf temp-drawio
+          cat index.html | grep -oP '(src|href)="[^"]*"' | grep -oP '"[^"]*"' | tr -d '"' | while read url; do
+            if [[ $url == //* ]]; then
+              url="https:$url"
+            elif [[ $url == /* ]]; then
+              url="https://embed.diagrams.net$url"
+            elif [[ ! $url == http* ]]; then
+              continue
+            fi
+            
+            if [[ $url == *embed.diagrams.net* ]]; then
+              filepath=${url#https://embed.diagrams.net}
+              filepath=${filepath#/}
+              
+              if [[ -z "$filepath" ]]; then
+                continue
+              fi
+              
+              mkdir -p "$(dirname "$filepath")"
+              
+              echo "Downloading: $filepath"
+              curl -f -o "$filepath" "$url" 2>/dev/null || echo "Failed: $url"
+            fi
+          done
 
-      - name: Get version
+      - name: Fix paths in HTML
         run: |
           cd drawio-embed
-          VERSION=$(git log -1 --format=%cd --date=format:%Y%m%d 2>/dev/null || date +%Y%m%d)
-          echo "DRAWIO_VERSION=$VERSION" >> $GITHUB_ENV
+          sed -i 's|https://embed.diagrams.net/|./|g' index.html
+          sed -i 's|//embed.diagrams.net/|./|g' index.html
 
-      - name: Create metadata
+      - name: Create version file
         run: |
           cat > drawio-embed/VERSION.txt << EOF
-          Draw.io Embed Mirror
-          Synced: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          Version: ${DRAWIO_VERSION}
-          Source: https://github.com/jgraph/drawio-integration
+          Synced: $(date -u)
+          Source: https://embed.diagrams.net
           EOF
 
-      - name: Check for changes
-        id: check_changes
-        run: |
-          git add drawio-embed/
-          if git diff --staged --quiet; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          else
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-          fi
-
       - name: Commit
-        if: steps.check_changes.outputs.has_changes == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "Update Draw.io ${DRAWIO_VERSION}"
+          git add drawio-embed/
+          git diff --staged --quiet || git commit -m "Update $(date +%Y-%m-%d)"
           git push
 
-      - name: Deploy to Pages
+      - name: Deploy
         uses: actions/configure-pages@v4
         
       - name: Upload
