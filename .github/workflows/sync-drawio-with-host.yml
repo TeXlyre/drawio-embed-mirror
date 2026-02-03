@@ -1,0 +1,489 @@
+name: Sync Draw.io Embed
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * 0"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: drawio-embed-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Puppeteer
+        run: npm install --no-save puppeteer
+
+      - name: Mirror embed app
+        run: |
+          cat > download.js << 'EOF'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
+          const path = require('path');
+
+          const BASE = 'https://embed.diagrams.net';
+          const ui = process.argv[2];
+          const outName = process.argv[3];
+
+          const downloaded = new Set();
+          const outDir = path.join(process.cwd(), 'drawio-embed', outName);
+
+          function relPathFromUrl(url) {
+            const u = new URL(url);
+            let p = u.pathname;
+            if (p === '/' || !p) p = '/index.html';
+            return p.replace(/^\//, '');
+          }
+
+          function safeWrite(filePath, data) {
+            const dir = path.dirname(filePath);
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(filePath, data);
+          }
+
+          function ensureStubs(themeDir) {
+            const jsDir = path.join(themeDir, 'js');
+            fs.mkdirSync(jsDir, { recursive: true });
+
+            const pre = path.join(jsDir, 'PreConfig.js');
+            if (!fs.existsSync(pre)) {
+              fs.writeFileSync(pre, 'window.DRAWIO_CONFIG = window.DRAWIO_CONFIG || {};\n');
+            }
+
+            const post = path.join(jsDir, 'PostConfig.js');
+            if (!fs.existsSync(post)) {
+              fs.writeFileSync(post, '\n');
+            }
+          }
+
+          function patchAppHtml(themeDir) {
+            const appPath = path.join(themeDir, 'app.html');
+            if (!fs.existsSync(appPath)) return;
+
+            let html = fs.readFileSync(appPath, 'utf8');
+
+            if (!/<base\s/i.test(html)) {
+              html = html.replace(/<head([^>]*)>/i, '<head$1>\n<base href="./">');
+            }
+
+            html = html.replace(/\b(src|href)="\/(?!\/)/g, '$1="./');
+
+            fs.writeFileSync(appPath, html);
+          }
+
+          (async () => {
+            fs.rmSync(outDir, { recursive: true, force: true });
+            fs.mkdirSync(outDir, { recursive: true });
+
+            const browser = await puppeteer.launch({
+              headless: 'new',
+              args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage'
+              ]
+            });
+
+            const page = await browser.newPage();
+
+            page.on('response', async (response) => {
+              try {
+                const url = response.url();
+                if (!url.startsWith(BASE)) return;
+                if (downloaded.has(url)) return;
+
+                const status = response.status();
+                if (status < 200 || status >= 300) return;
+
+                downloaded.add(url);
+
+                const relPath = relPathFromUrl(url);
+                const fullPath = path.join(outDir, relPath);
+
+                let buffer = Buffer.alloc(0);
+                try {
+                  buffer = await response.buffer();
+                } catch (_) {
+                  buffer = Buffer.alloc(0);
+                }
+
+                safeWrite(fullPath, buffer);
+                process.stdout.write(`✓ ${relPath}\n`);
+              } catch (_) {}
+            });
+
+            const params =
+              `embed=1&proto=json&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1` +
+              `&db=0&od=0&gapi=0&tr=0&gh=0&gl=0&stealth=1&offline=1&ui=${encodeURIComponent(ui)}`;
+
+            const url = `${BASE}/?${params}`;
+            process.stdout.write(`\nLoading: ${url}\n\n`);
+
+            await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
+            await new Promise((r) => setTimeout(r, 15000));
+
+            await browser.close();
+
+            const indexPath = path.join(outDir, 'index.html');
+            const appPath = path.join(outDir, 'app.html');
+
+            if (!fs.existsSync(indexPath)) {
+              throw new Error(`${outName}/index.html missing after download`);
+            }
+
+            fs.renameSync(indexPath, appPath);
+
+            const redirectHtml =
+              `<!doctype html><meta charset="utf-8">` +
+              `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+              `<title>drawio-embed</title>` +
+              `<script>location.replace("app.html?${params}");</script>` +
+              `<noscript><a href="app.html?${params}">Open</a></noscript>`;
+
+            safeWrite(indexPath, redirectHtml);
+
+            ensureStubs(outDir);
+            patchAppHtml(outDir);
+
+            process.stdout.write(`\n${outName}: Downloaded ${downloaded.size} files\n`);
+          })().catch((err) => {
+            process.stderr.write(`Error: ${err && err.stack ? err.stack : err}\n`);
+            process.exit(1);
+          });
+          EOF
+
+          node download.js kennedy light
+          node download.js dark dark
+
+          mkdir -p drawio-embed/host
+
+          cat > drawio-embed/host/index.html << 'EOF'
+          <!doctype html>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width,initial-scale=1" />
+          <title>Draw.io Embed Host</title>
+          <style>
+            html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; }
+            header { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid #ddd; }
+            header button { padding: 6px 10px; }
+            #wrap { height: calc(100% - 52px); }
+            iframe { width: 100%; height: 100%; border: 0; display: block; }
+            textarea { width: 520px; height: 34px; }
+          </style>
+          <header>
+            <button id="new">New</button>
+            <button id="exportPng">Export PNG</button>
+            <button id="exportXml">Export XML</button>
+            <button id="loadXml">Load XML</button>
+            <textarea id="xml" placeholder="Paste diagram XML here (for Load XML)"></textarea>
+            <span id="status">loading…</span>
+          </header>
+          <div id="wrap">
+            <iframe id="editor" allow="clipboard-read; clipboard-write"></iframe>
+          </div>
+          <script>
+            const theme = 'light';
+
+            const params = new URLSearchParams({
+              embed: '1',
+              proto: 'json',
+              spin: '1',
+              libraries: '1',
+              saveAndExit: '0',
+              noSaveBtn: '1',
+              noExitBtn: '1',
+              db: '0',
+              od: '0',
+              gapi: '0',
+              tr: '0',
+              gh: '0',
+              gl: '0',
+              stealth: '1',
+              offline: '1',
+              ui: 'kennedy'
+            });
+
+            const iframe = document.getElementById('editor');
+            iframe.src = `../${theme}/app.html?${params.toString()}`;
+
+            const statusEl = document.getElementById('status');
+            const xmlEl = document.getElementById('xml');
+
+            let editorReady = false;
+
+            function post(action, extra = {}) {
+              if (!iframe.contentWindow) return;
+              iframe.contentWindow.postMessage(JSON.stringify({ action, ...extra }), '*');
+            }
+
+            function setStatus(s) { statusEl.textContent = s; }
+
+            function blankMxfile() {
+              return '<mxfile host="app.diagrams.net"><diagram name="Page-1"></diagram></mxfile>';
+            }
+
+            function loadXml(xml) {
+              post('load', { xml });
+            }
+
+            function requestExportPng() {
+              post('export', { format: 'png', spin: '1', base64: '1', scale: '1' });
+            }
+
+            function requestExportXml() {
+              post('export', { format: 'xml', spin: '1' });
+            }
+
+            window.addEventListener('message', (evt) => {
+              let msg;
+              try { msg = JSON.parse(evt.data); } catch { return; }
+              if (!msg || typeof msg !== 'object') return;
+
+              if (msg.event === 'init') {
+                editorReady = true;
+                setStatus('ready');
+                loadXml(blankMxfile());
+                return;
+              }
+
+              if (msg.event === 'load') {
+                setStatus('loaded');
+                return;
+              }
+
+              if (msg.event === 'export') {
+                setStatus('exported');
+                if (msg.format === 'png' && msg.data) {
+                  const a = document.createElement('a');
+                  a.href = 'data:image/png;base64,' + msg.data;
+                  a.download = 'diagram.png';
+                  a.click();
+                } else if (msg.format === 'xml' && msg.data) {
+                  xmlEl.value = msg.data;
+                }
+                return;
+              }
+
+              if (msg.event === 'error') {
+                setStatus('error');
+                console.error(msg);
+                return;
+              }
+            });
+
+            document.getElementById('new').addEventListener('click', () => {
+              if (!editorReady) return;
+              loadXml(blankMxfile());
+            });
+
+            document.getElementById('exportPng').addEventListener('click', () => {
+              if (!editorReady) return;
+              requestExportPng();
+            });
+
+            document.getElementById('exportXml').addEventListener('click', () => {
+              if (!editorReady) return;
+              requestExportXml();
+            });
+
+            document.getElementById('loadXml').addEventListener('click', () => {
+              if (!editorReady) return;
+              const xml = xmlEl.value.trim();
+              if (xml) loadXml(xml);
+            });
+
+            setStatus('waiting for init…');
+          </script>
+          EOF
+
+          cat > drawio-embed/host/dark.html << 'EOF'
+          <!doctype html>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width,initial-scale=1" />
+          <title>Draw.io Embed Host (Dark)</title>
+          <style>
+            html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; }
+            header { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid #333; }
+            header button { padding: 6px 10px; }
+            #wrap { height: calc(100% - 52px); }
+            iframe { width: 100%; height: 100%; border: 0; display: block; }
+            textarea { width: 520px; height: 34px; }
+          </style>
+          <header>
+            <button id="new">New</button>
+            <button id="exportPng">Export PNG</button>
+            <button id="exportXml">Export XML</button>
+            <button id="loadXml">Load XML</button>
+            <textarea id="xml" placeholder="Paste diagram XML here (for Load XML)"></textarea>
+            <span id="status">loading…</span>
+          </header>
+          <div id="wrap">
+            <iframe id="editor" allow="clipboard-read; clipboard-write"></iframe>
+          </div>
+          <script>
+            const theme = 'dark';
+
+            const params = new URLSearchParams({
+              embed: '1',
+              proto: 'json',
+              spin: '1',
+              libraries: '1',
+              saveAndExit: '0',
+              noSaveBtn: '1',
+              noExitBtn: '1',
+              db: '0',
+              od: '0',
+              gapi: '0',
+              tr: '0',
+              gh: '0',
+              gl: '0',
+              stealth: '1',
+              offline: '1',
+              ui: 'dark'
+            });
+
+            const iframe = document.getElementById('editor');
+            iframe.src = `../${theme}/app.html?${params.toString()}`;
+
+            const statusEl = document.getElementById('status');
+            const xmlEl = document.getElementById('xml');
+
+            let editorReady = false;
+
+            function post(action, extra = {}) {
+              if (!iframe.contentWindow) return;
+              iframe.contentWindow.postMessage(JSON.stringify({ action, ...extra }), '*');
+            }
+
+            function setStatus(s) { statusEl.textContent = s; }
+
+            function blankMxfile() {
+              return '<mxfile host="app.diagrams.net"><diagram name="Page-1"></diagram></mxfile>';
+            }
+
+            function loadXml(xml) {
+              post('load', { xml });
+            }
+
+            function requestExportPng() {
+              post('export', { format: 'png', spin: '1', base64: '1', scale: '1' });
+            }
+
+            function requestExportXml() {
+              post('export', { format: 'xml', spin: '1' });
+            }
+
+            window.addEventListener('message', (evt) => {
+              let msg;
+              try { msg = JSON.parse(evt.data); } catch { return; }
+              if (!msg || typeof msg !== 'object') return;
+
+              if (msg.event === 'init') {
+                editorReady = true;
+                setStatus('ready');
+                loadXml(blankMxfile());
+                return;
+              }
+
+              if (msg.event === 'load') {
+                setStatus('loaded');
+                return;
+              }
+
+              if (msg.event === 'export') {
+                setStatus('exported');
+                if (msg.format === 'png' && msg.data) {
+                  const a = document.createElement('a');
+                  a.href = 'data:image/png;base64,' + msg.data;
+                  a.download = 'diagram.png';
+                  a.click();
+                } else if (msg.format === 'xml' && msg.data) {
+                  xmlEl.value = msg.data;
+                }
+                return;
+              }
+
+              if (msg.event === 'error') {
+                setStatus('error');
+                console.error(msg);
+                return;
+              }
+            });
+
+            document.getElementById('new').addEventListener('click', () => {
+              if (!editorReady) return;
+              loadXml(blankMxfile());
+            });
+
+            document.getElementById('exportPng').addEventListener('click', () => {
+              if (!editorReady) return;
+              requestExportPng();
+            });
+
+            document.getElementById('exportXml').addEventListener('click', () => {
+              if (!editorReady) return;
+              requestExportXml();
+            });
+
+            document.getElementById('loadXml').addEventListener('click', () => {
+              if (!editorReady) return;
+              const xml = xmlEl.value.trim();
+              if (xml) loadXml(xml);
+            });
+
+            setStatus('waiting for init…');
+          </script>
+          EOF
+
+          cat > drawio-embed/VERSION.txt << EOF
+          Draw.io Embed Mirror
+          Synced: $(date -u)
+          Light files: $(find drawio-embed/light -type f 2>/dev/null | wc -l)
+          Dark files: $(find drawio-embed/dark -type f 2>/dev/null | wc -l)
+          EOF
+
+      - name: Verify
+        run: |
+          for theme in light dark; do
+            test -f "drawio-embed/$theme/index.html"
+            test -f "drawio-embed/$theme/app.html"
+            test -f "drawio-embed/$theme/js/PreConfig.js"
+            echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files)"
+          done
+          test -f "drawio-embed/host/index.html"
+          test -f "drawio-embed/host/dark.html"
+          echo "✓ host pages ready"
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add drawio-embed/
+          git diff --staged --quiet || git commit -m "Update $(date +%Y-%m-%d)"
+          git push || true
+
+      - name: Deploy
+        uses: actions/configure-pages@v4
+
+      - name: Upload
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: drawio-embed
+
+      - name: Deploy Pages
+        uses: actions/deploy-pages@v4
