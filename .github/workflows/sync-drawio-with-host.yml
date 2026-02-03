@@ -1,4 +1,4 @@
-name: Sync Draw.io Embed
+name: Sync Draw.io Embed with Host
 
 on:
   workflow_dispatch:
