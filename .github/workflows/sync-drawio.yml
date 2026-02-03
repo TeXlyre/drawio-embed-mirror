@@ -18,62 +18,109 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download from embed.diagrams.net
+      - name: Download drawio files
         run: |
+          rm -rf drawio-embed
           mkdir -p drawio-embed
           cd drawio-embed
           
-          curl -o index.html 'https://embed.diagrams.net/?embed=1&proto=json&spin=1'
+          BASE_URL="https://embed.diagrams.net"
           
-          cat index.html | grep -oP '(src|href)="[^"]*"' | grep -oP '"[^"]*"' | tr -d '"' | while read url; do
+          echo "Downloading main files..."
+          curl -L -o index.html "${BASE_URL}/?embed=1&proto=json&spin=1"
+          
+          echo "Downloading common resources..."
+          mkdir -p js styles images mxgraph/css
+          
+          curl -f -o js/PreConfig.js "${BASE_URL}/js/PreConfig.js" 2>/dev/null || echo "PreConfig.js not found"
+          curl -f -o js/app.min.js "${BASE_URL}/js/app.min.js" 2>/dev/null || echo "app.min.js not found"
+          curl -f -o js/viewer.min.js "${BASE_URL}/js/viewer.min.js" 2>/dev/null || echo "viewer.min.js not found"
+          curl -f -o styles/grapheditor.css "${BASE_URL}/styles/grapheditor.css" 2>/dev/null || echo "grapheditor.css not found"
+          curl -f -o images/spin.gif "${BASE_URL}/images/spin.gif" 2>/dev/null || echo "spin.gif not found"
+          curl -f -o favicon.ico "${BASE_URL}/favicon.ico" 2>/dev/null || echo "favicon.ico not found"
+          
+          echo '{"version":"1.0.0"}' > images/manifest.json
+          echo '{"version":"1.0.0"}' > manifest.json
+          
+          echo "Extracting additional resources from HTML..."
+          grep -oP '(src|href)="[^"]*"' index.html | grep -oP '"[^"]*"' | tr -d '"' | sort -u | while read url; do
             if [[ $url == //* ]]; then
               url="https:$url"
             elif [[ $url == /* ]]; then
-              url="https://embed.diagrams.net$url"
+              url="${BASE_URL}${url}"
             elif [[ ! $url == http* ]]; then
               continue
             fi
             
-            if [[ $url == *embed.diagrams.net* ]]; then
+            if [[ $url == *embed.diagrams.net* ]] || [[ $url == *draw.io* ]]; then
               filepath=${url#https://embed.diagrams.net}
+              filepath=${filepath#https://www.draw.io}
               filepath=${filepath#/}
               
-              if [[ -z "$filepath" ]]; then
+              if [[ -z "$filepath" ]] || [[ -f "$filepath" ]]; then
                 continue
               fi
               
               mkdir -p "$(dirname "$filepath")"
               
               echo "Downloading: $filepath"
-              curl -f -o "$filepath" "$url" 2>/dev/null || echo "Failed: $url"
+              curl -f -L -o "$filepath" "$url" 2>/dev/null || echo "  Failed: $url"
+              
+              sleep 0.2
             fi
           done
 
-      - name: Fix paths in HTML
+      - name: Fix paths
         run: |
           cd drawio-embed
-          sed -i 's|https://embed.diagrams.net/|./|g' index.html
-          sed -i 's|//embed.diagrams.net/|./|g' index.html
+          
+          find . -type f \( -name "*.html" -o -name "*.js" -o -name "*.css" \) -exec sed -i \
+            -e 's|https://embed\.diagrams\.net/|./|g' \
+            -e 's|//embed\.diagrams\.net/|./|g' \
+            -e 's|https://www\.draw\.io/|./|g' \
+            {} +
+
+      - name: Create optional files
+        run: |
+          cd drawio-embed
+          
+          if [ ! -f "js/PreConfig.js" ]; then
+            echo "// PreConfig placeholder" > js/PreConfig.js
+          fi
 
       - name: Create version file
         run: |
           cat > drawio-embed/VERSION.txt << EOF
-          Synced: $(date -u)
+          Draw.io Embed Mirror
+          Synced: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
           Source: https://embed.diagrams.net
+          Files: $(find drawio-embed -type f | wc -l)
           EOF
+
+      - name: Verify
+        run: |
+          FILE_COUNT=$(find drawio-embed -type f | wc -l)
+          echo "Downloaded $FILE_COUNT files"
+          
+          if [ ! -f "drawio-embed/index.html" ]; then
+            echo "ERROR: index.html missing"
+            exit 1
+          fi
+          
+          ls -la drawio-embed/
 
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add drawio-embed/
-          git diff --staged --quiet || git commit -m "Update $(date +%Y-%m-%d)"
-          git push
+          git diff --staged --quiet || git commit -m "Update Draw.io $(date +%Y-%m-%d)"
+          git push || echo "No changes to push"
 
-      - name: Deploy
+      - name: Deploy to Pages
         uses: actions/configure-pages@v4
         
-      - name: Upload
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: 'drawio-embed'
