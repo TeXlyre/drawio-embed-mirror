@@ -1,5 +1,6 @@
 Draw.io Embed Mirror
-Synced: Tue Feb  3 21:40:05 UTC 2026
-Files: 25
-Method: Puppeteer (minimal configuration)
+Synced: Tue Feb  3 21:45:15 UTC 2026
+Themes: light, dark (separate static builds)
+Light files: 24
+Dark files: 24
 Configuration: embed=1, stealth=1, offline=1, no cloud integrations
