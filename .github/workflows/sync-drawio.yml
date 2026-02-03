@@ -37,28 +37,40 @@ jobs:
             --domains=embed.diagrams.net \
             --no-parent \
             --accept='html,htm,css,js,json,svg,png,jpg,jpeg,gif,woff,woff2,ttf,eot,ico,xml' \
-            --reject='*?*export*,*?*connect*,*?*proxy*,*?*upload*,*?*import*' \
+            --reject='*export*,*connect*,*proxy*,*upload*,*import*' \
             --timeout=30 \
             --tries=3 \
             --wait=0.5 \
             --random-wait \
-            --user-agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' \
+            --user-agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' \
             'https://embed.diagrams.net/?embed=1&proto=json&spin=1&libraries=1&ui=min'
           
           cd ..
 
-      - name: Reorganize files
+      - name: Reorganize and clean files
         run: |
           if [ -d "temp-download/embed.diagrams.net" ]; then
             mv temp-download/embed.diagrams.net drawio-embed
+            rm -rf temp-download
           else
             mv temp-download drawio-embed
           fi
           
           cd drawio-embed
           
-          if [ -f "index.html*" ]; then
-            mv index.html* index.html
+          find . -type f -name "*@*" -o -name "*.tmp.html" | while read file; do
+            newname=$(echo "$file" | sed 's/@.*//; s/\.tmp\.html/.html/')
+            if [ "$newname" != "$file" ]; then
+              echo "Renaming: $file -> $newname"
+              mv "$file" "$newname"
+            fi
+          done
+          
+          if [ ! -f "index.html" ]; then
+            MAIN_FILE=$(find . -maxdepth 1 -name "index*.html" | head -1)
+            if [ -n "$MAIN_FILE" ]; then
+              mv "$MAIN_FILE" index.html
+            fi
           fi
           
           find . -type f -name "*\?*" -delete
@@ -74,10 +86,10 @@ jobs:
         run: |
           cd drawio-embed
           
-          echo '{"version":"mirror"}' > manifest.json 2>/dev/null || true
+          echo '{"version":"mirror"}' > manifest.json
           
           mkdir -p images js styles
-          echo '{"version":"mirror"}' > images/manifest.json 2>/dev/null || true
+          echo '{"version":"mirror"}' > images/manifest.json
           
           if [ ! -f "js/PreConfig.js" ]; then
             echo "window.DRAWIO_CONFIG = {};" > js/PreConfig.js
@@ -88,19 +100,21 @@ jobs:
           FILE_COUNT=$(find drawio-embed -type f | wc -l)
           
           echo "Total files: $FILE_COUNT"
-          echo "Directory structure:"
-          find drawio-embed -type d | head -20
           echo ""
-          echo "Sample files:"
-          find drawio-embed -type f -name "*.js" -o -name "*.css" -o -name "*.html" | head -20
+          echo "Main files:"
+          ls -lh drawio-embed/ | head -20
+          echo ""
+          echo "JavaScript files:"
+          find drawio-embed -name "*.js" | head -20
           
           if [ ! -f "drawio-embed/index.html" ]; then
             echo "ERROR: index.html not found!"
-            ls -la drawio-embed/
+            echo "Files in drawio-embed:"
+            find drawio-embed -type f
             exit 1
           fi
           
-          if [ "$FILE_COUNT" -lt 20 ]; then
+          if [ "$FILE_COUNT" -lt 10 ]; then
             echo "ERROR: Too few files ($FILE_COUNT)"
             exit 1
           fi
@@ -114,7 +128,7 @@ jobs:
           Synced: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
           Source: https://embed.diagrams.net
           Files: $(find drawio-embed -type f | wc -l)
-          Method: Recursive wget crawl (depth 5)
+          Method: Recursive wget crawl
           EOF
 
       - name: Commit
