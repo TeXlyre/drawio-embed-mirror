@@ -43,19 +43,29 @@ jobs:
           rm -rf ../../../drawio-embed
           mkdir -p ../../../drawio-embed
           
-          cp -r js ../../../drawio-embed/
-          cp -r styles ../../../drawio-embed/
-          cp -r images ../../../drawio-embed/
-          cp -r mxgraph ../../../drawio-embed/
-          cp -r math ../../../drawio-embed/
-          cp -r resources ../../../drawio-embed/
-          cp -r stencils ../../../drawio-embed/
-          cp -r plugins ../../../drawio-embed/ 2>/dev/null || true
-          cp -r shapes ../../../drawio-embed/ 2>/dev/null || true
-          cp index.html ../../../drawio-embed/
-          cp favicon.ico ../../../drawio-embed/ 2>/dev/null || true
+          DIRS_TO_COPY="js styles images mxgraph math math4 resources stencils plugins shapes fonts connect"
+          
+          for dir in $DIRS_TO_COPY; do
+            if [ -d "$dir" ]; then
+              echo "Copying $dir..."
+              cp -r "$dir" ../../../drawio-embed/
+            else
+              echo "Skipping $dir (not found)"
+            fi
+          done
+          
+          if [ -f "index.html" ]; then
+            cp index.html ../../../drawio-embed/
+          fi
+          
+          if [ -f "favicon.ico" ]; then
+            cp favicon.ico ../../../drawio-embed/
+          fi
           
           cd ../../../
+          
+          echo "Files copied successfully"
+          ls -la drawio-embed/
 
       - name: Get drawio version
         run: |
@@ -93,6 +103,13 @@ jobs:
         run: |
           if [ ! -f "drawio-embed/index.html" ]; then
             echo "ERROR: index.html not found!"
+            echo "Contents of drawio-embed:"
+            ls -la drawio-embed/
+            exit 1
+          fi
+          
+          if [ ! -d "drawio-embed/js" ]; then
+            echo "ERROR: js directory not found!"
             exit 1
           fi
           
@@ -103,6 +120,10 @@ jobs:
           fi
           
           echo "Successfully prepared $FILE_COUNT files"
+          echo "## Build Verification" >> $GITHUB_STEP_SUMMARY
+          echo "- Total files: $FILE_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- index.html: ✓" >> $GITHUB_STEP_SUMMARY
+          echo "- js directory: ✓" >> $GITHUB_STEP_SUMMARY
 
       - name: Cleanup
         run: |
