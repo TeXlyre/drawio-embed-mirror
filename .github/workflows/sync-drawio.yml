@@ -26,7 +26,7 @@ jobs:
       - name: Install Puppeteer
         run: npm install puppeteer
 
-      - name: Download with Puppeteer
+      - name: Download Light Theme
         run: |
           cat > download.js << 'EOF'
           const puppeteer = require('puppeteer');
@@ -34,8 +34,9 @@ jobs:
           const path = require('path');
 
           const BASE = 'https://embed.diagrams.net';
+          const THEME = process.argv[2] || 'light';
           const downloaded = new Set();
-          const outDir = path.join(process.cwd(), 'drawio-embed');
+          const outDir = path.join(process.cwd(), 'drawio-embed', THEME);
 
           function sanitizePath(url) {
             let p = new URL(url).pathname;
@@ -74,8 +75,11 @@ jobs:
               }
             });
 
-            console.log('Loading Draw.io with minimal configuration...');
-            await page.goto(BASE + '/?embed=1&proto=json&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1&stealth=1&offline=1&ui=min', {
+            const url = `${BASE}/?embed=1&proto=json&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1&stealth=1&offline=1&ui=${THEME}`;
+            console.log(`Loading Draw.io with ${THEME} theme...`);
+            console.log(`URL: ${url}`);
+            
+            await page.goto(url, {
               waitUntil: 'networkidle0',
               timeout: 120000
             });
@@ -85,11 +89,12 @@ jobs:
 
             await browser.close();
 
-            console.log(`\nDownloaded ${downloaded.size} files`);
+            console.log(`\n${THEME}: Downloaded ${downloaded.size} files`);
             
             fs.writeFileSync(
               path.join(outDir, 'manifest.json'),
               JSON.stringify({ 
+                theme: THEME,
                 synced: new Date().toISOString(),
                 files: downloaded.size 
               }, null, 2)
@@ -102,63 +107,67 @@ jobs:
           });
           EOF
 
-          node download.js
+          node download.js light
 
-      - name: Remove server-side integration files
+      - name: Download Dark Theme
         run: |
-          cd drawio-embed
-          
-          echo "Removing cloud integration files..."
-          rm -f cache 2>/dev/null || true
-          rm -f github* 2>/dev/null || true
-          rm -f gitlab* 2>/dev/null || true
-          rm -f dropbox* 2>/dev/null || true
-          rm -f onedrive* 2>/dev/null || true
-          rm -f trello* 2>/dev/null || true
-          rm -f js/dropbox-sdk.min.js 2>/dev/null || true
-          rm -rf integrations/ 2>/dev/null || true
-          
-          find . -name "*\?*" -type f -delete
-          
-          echo "Remaining files: $(find . -type f | wc -l)"
+          node download.js dark
 
-      - name: Create missing files
+      - name: Clean up integration files
         run: |
-          cd drawio-embed
-          
-          mkdir -p images js styles
-          
-          if [ ! -f "images/manifest.json" ]; then
-            echo '{"version":"mirror"}' > images/manifest.json
-          fi
-          
-          if [ ! -f "js/PreConfig.js" ]; then
-            echo "window.DRAWIO_CONFIG = {};" > js/PreConfig.js
-          fi
+          for theme in light dark; do
+            cd drawio-embed/$theme
+            
+            echo "Cleaning $theme theme..."
+            rm -f cache 2>/dev/null || true
+            rm -f github* 2>/dev/null || true
+            rm -f gitlab* 2>/dev/null || true
+            rm -f dropbox* 2>/dev/null || true
+            rm -f onedrive* 2>/dev/null || true
+            rm -f trello* 2>/dev/null || true
+            rm -f js/dropbox-sdk.min.js 2>/dev/null || true
+            rm -rf integrations/ 2>/dev/null || true
+            
+            find . -name "*\?*" -type f -delete
+            
+            mkdir -p images js styles
+            
+            if [ ! -f "images/manifest.json" ]; then
+              echo '{"version":"mirror"}' > images/manifest.json
+            fi
+            
+            if [ ! -f "js/PreConfig.js" ]; then
+              echo "window.DRAWIO_CONFIG = {};" > js/PreConfig.js
+            fi
+            
+            cd ../..
+          done
 
       - name: Verify
         run: |
-          FILE_COUNT=$(find drawio-embed -type f | wc -l)
-          
-          echo "Files: $FILE_COUNT"
-          echo ""
-          echo "Critical files:"
-          [ -f "drawio-embed/index.html" ] && echo "  ✓ index.html" || echo "  ✗ index.html MISSING"
-          [ -f "drawio-embed/js/app.min.js" ] && echo "  ✓ app.min.js" || echo "  ✗ app.min.js MISSING"
-          [ -f "drawio-embed/js/bootstrap.js" ] && echo "  ✓ bootstrap.js" || echo "  ✗ bootstrap.js MISSING"
-          
-          if [ ! -f "drawio-embed/index.html" ]; then
-            echo "ERROR: index.html missing"
-            exit 1
-          fi
+          for theme in light dark; do
+            echo "Verifying $theme theme..."
+            FILE_COUNT=$(find drawio-embed/$theme -type f | wc -l)
+            echo "  Files: $FILE_COUNT"
+            
+            [ -f "drawio-embed/$theme/index.html" ] && echo "  ✓ index.html" || echo "  ✗ index.html MISSING"
+            [ -f "drawio-embed/$theme/js/app.min.js" ] && echo "  ✓ app.min.js" || echo "  ✗ app.min.js MISSING"
+            
+            if [ ! -f "drawio-embed/$theme/index.html" ]; then
+              echo "ERROR: $theme/index.html missing"
+              exit 1
+            fi
+            echo ""
+          done
 
       - name: Create version file
         run: |
           cat > drawio-embed/VERSION.txt << EOF
           Draw.io Embed Mirror
           Synced: $(date -u)
-          Files: $(find drawio-embed -type f | wc -l)
-          Method: Puppeteer (minimal configuration)
+          Themes: light, dark (separate static builds)
+          Light files: $(find drawio-embed/light -type f | wc -l)
+          Dark files: $(find drawio-embed/dark -type f | wc -l)
           Configuration: embed=1, stealth=1, offline=1, no cloud integrations
           EOF
 
