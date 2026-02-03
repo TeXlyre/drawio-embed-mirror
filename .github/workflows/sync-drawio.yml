@@ -32,7 +32,6 @@ jobs:
           const puppeteer = require('puppeteer');
           const fs = require('fs');
           const path = require('path');
-          const https = require('https');
 
           const BASE = 'https://embed.diagrams.net';
           const downloaded = new Set();
@@ -42,21 +41,6 @@ jobs:
             let p = new URL(url).pathname;
             if (p === '/' || !p) p = '/index.html';
             return p.replace(/^\//, '');
-          }
-
-          function download(url, dest) {
-            return new Promise((resolve, reject) => {
-              https.get(url, (res) => {
-                if (res.statusCode === 301 || res.statusCode === 302) {
-                  download(res.headers.location, dest).then(resolve).catch(reject);
-                  return;
-                }
-                const file = fs.createWriteStream(dest);
-                res.pipe(file);
-                file.on('finish', () => { file.close(); resolve(); });
-                file.on('error', reject);
-              }).on('error', reject);
-            });
           }
 
           (async () => {
@@ -90,8 +74,8 @@ jobs:
               }
             });
 
-            console.log('Loading Draw.io...');
-            await page.goto(BASE + '/?embed=1&proto=json&spin=1&libraries=1&ui=min', {
+            console.log('Loading Draw.io with minimal configuration...');
+            await page.goto(BASE + '/?embed=1&proto=json&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1&stealth=1&offline=1&ui=min', {
               waitUntil: 'networkidle0',
               timeout: 120000
             });
@@ -119,7 +103,7 @@ jobs:
           EOF
 
           node download.js
-          
+
       - name: Remove server-side integration files
         run: |
           cd drawio-embed
@@ -130,11 +114,14 @@ jobs:
           rm -f gitlab* 2>/dev/null || true
           rm -f dropbox* 2>/dev/null || true
           rm -f onedrive* 2>/dev/null || true
+          rm -f trello* 2>/dev/null || true
           rm -f js/dropbox-sdk.min.js 2>/dev/null || true
           rm -rf integrations/ 2>/dev/null || true
           
-          echo "Remaining files: $(find . -type f | wc -l)"
+          find . -name "*\?*" -type f -delete
           
+          echo "Remaining files: $(find . -type f | wc -l)"
+
       - name: Create missing files
         run: |
           cd drawio-embed
@@ -171,7 +158,8 @@ jobs:
           Draw.io Embed Mirror
           Synced: $(date -u)
           Files: $(find drawio-embed -type f | wc -l)
-          Method: Puppeteer (browser-based crawl)
+          Method: Puppeteer (minimal configuration)
+          Configuration: embed=1, stealth=1, offline=1, no cloud integrations
           EOF
 
       - name: Commit
