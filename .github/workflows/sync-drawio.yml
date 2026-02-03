@@ -3,17 +3,20 @@ name: Sync Draw.io Embed
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 2 * * 0'
+    - cron: "0 2 * * 0"
 
 permissions:
   contents: write
   pages: write
   id-token: write
 
+concurrency:
+  group: drawio-embed-sync
+  cancel-in-progress: true
+
 jobs:
   sync:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,12 +24,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install Puppeteer
-        run: npm install puppeteer
+        run: npm install --no-save puppeteer
 
-      - name: Download both themes
+      - name: Mirror embed app
         run: |
           cat > download.js << 'EOF'
           const puppeteer = require('puppeteer');
@@ -34,77 +37,106 @@ jobs:
           const path = require('path');
 
           const BASE = 'https://embed.diagrams.net';
-          const THEME = process.argv[2] || 'light';
-          const downloaded = new Set();
-          const outDir = path.join(process.cwd(), 'drawio-embed', THEME);
+          const ui = process.argv[2];
+          const outName = process.argv[3];
 
-          function sanitizePath(url) {
-            let p = new URL(url).pathname;
+          const downloaded = new Set();
+          const outDir = path.join(process.cwd(), 'drawio-embed', outName);
+
+          function relPathFromUrl(url) {
+            const u = new URL(url);
+            let p = u.pathname;
             if (p === '/' || !p) p = '/index.html';
             return p.replace(/^\//, '');
           }
 
+          function safeWrite(filePath, data) {
+            const dir = path.dirname(filePath);
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(filePath, data);
+          }
+
           (async () => {
-            if (fs.existsSync(outDir)) fs.rmSync(outDir, { recursive: true });
+            fs.rmSync(outDir, { recursive: true, force: true });
             fs.mkdirSync(outDir, { recursive: true });
 
-            const browser = await puppeteer.launch({ 
+            const browser = await puppeteer.launch({
               headless: 'new',
-              args: ['--no-sandbox', '--disable-setuid-sandbox']
+              args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage'
+              ]
             });
+
             const page = await browser.newPage();
 
             page.on('response', async (response) => {
-              const url = response.url();
-              if (!url.startsWith(BASE)) return;
-              if (downloaded.has(url)) return;
-              if (response.status() !== 200) return;
-
-              downloaded.add(url);
-              const relPath = sanitizePath(url);
-              const fullPath = path.join(outDir, relPath);
-              const dir = path.dirname(fullPath);
-
               try {
-                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                const buffer = await response.buffer();
-                fs.writeFileSync(fullPath, buffer);
-                console.log(`✓ ${relPath}`);
-              } catch (err) {
-                console.error(`✗ ${relPath}: ${err.message}`);
-              }
+                const url = response.url();
+                if (!url.startsWith(BASE)) return;
+                if (downloaded.has(url)) return;
+
+                const status = response.status();
+                if (status < 200 || status >= 300) return;
+
+                downloaded.add(url);
+
+                const relPath = relPathFromUrl(url);
+                const fullPath = path.join(outDir, relPath);
+
+                let buffer = Buffer.alloc(0);
+                try {
+                  buffer = await response.buffer();
+                } catch (_) {
+                  buffer = Buffer.alloc(0);
+                }
+
+                safeWrite(fullPath, buffer);
+                process.stdout.write(`✓ ${relPath}\n`);
+              } catch (_) {}
             });
 
-            const url = `${BASE}/?embed=1&ui=${THEME}&proto=json&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1`;
-            console.log(`\nLoading: ${url}\n`);
-            
-            await page.goto(url, {
-              waitUntil: 'networkidle0',
-              timeout: 120000
-            });
+            const params =
+              `embed=1&proto=json&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1` +
+              `&db=0&od=0&gapi=0&tr=0&gh=0&gl=0&stealth=1&offline=1&ui=${encodeURIComponent(ui)}`;
 
-            await new Promise(resolve => setTimeout(resolve, 15000));
+            const url = `${BASE}/?${params}`;
+            process.stdout.write(`\nLoading: ${url}\n\n`);
+
+            await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
+            await new Promise((r) => setTimeout(r, 15000));
 
             await browser.close();
 
-            console.log(`\n${THEME}: Downloaded ${downloaded.size} files`);
+            const indexPath = path.join(outDir, 'index.html');
+            const appPath = path.join(outDir, 'app.html');
 
-            process.exit(0);
-          })().catch(err => {
-            console.error('Error:', err);
+            if (!fs.existsSync(indexPath)) {
+              throw new Error(`${outName}/index.html missing after download`);
+            }
+
+            fs.renameSync(indexPath, appPath);
+
+            const redirectHtml =
+              `<!doctype html><meta charset="utf-8">` +
+              `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+              `<title>drawio-embed</title>` +
+              `<script>location.replace("app.html?${params}");</script>` +
+              `<noscript><a href="app.html?${params}">Open</a></noscript>`;
+
+            safeWrite(indexPath, redirectHtml);
+
+            process.stdout.write(`\n${outName}: Downloaded ${downloaded.size} files\n`);
+          })().catch((err) => {
+            process.stderr.write(`Error: ${err && err.stack ? err.stack : err}\n`);
             process.exit(1);
           });
           EOF
 
-          echo "Downloading light theme..."
-          node download.js light
-          
-          echo ""
-          echo "Downloading dark theme..."
-          node download.js dark
+          node download.js kennedy light
+          node download.js dark dark
 
-      - name: Create version file
-        run: |
           cat > drawio-embed/VERSION.txt << EOF
           Draw.io Embed Mirror
           Synced: $(date -u)
@@ -115,10 +147,8 @@ jobs:
       - name: Verify
         run: |
           for theme in light dark; do
-            if [ ! -f "drawio-embed/$theme/index.html" ]; then
-              echo "ERROR: $theme/index.html missing"
-              exit 1
-            fi
+            test -f "drawio-embed/$theme/index.html"
+            test -f "drawio-embed/$theme/app.html"
             echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files)"
           done
 
@@ -132,11 +162,11 @@ jobs:
 
       - name: Deploy
         uses: actions/configure-pages@v4
-        
+
       - name: Upload
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'drawio-embed'
-          
+          path: drawio-embed
+
       - name: Deploy Pages
         uses: actions/deploy-pages@v4
