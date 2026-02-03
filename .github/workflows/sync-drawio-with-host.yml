@@ -179,11 +179,40 @@ jobs:
           EOF
           done
 
-          cp "drawio-embed/light/resources/dia.txt" "drawio-embed/light/resources/dia_en.txt"
-          cp "drawio-embed/dark/resources/dia.txt" "drawio-embed/dark/resources/dia_en.txt"
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
 
-          curl -fsSL "https://raw.githubusercontent.com/jgraph/drawio/dev/src/main/webapp/resources/dia_de.txt" -o "drawio-embed/light/resources/dia_de.txt" || cp "drawio-embed/light/resources/dia.txt" "drawio-embed/light/resources/dia_de.txt"
-          cp "drawio-embed/light/resources/dia_de.txt" "drawio-embed/dark/resources/dia_de.txt"
+          api = "https://api.github.com/repos/jgraph/drawio/contents/src/main/webapp/resources?ref=dev"
+          req = urllib.request.Request(api, headers={"Accept":"application/vnd.github+json","User-Agent":"gh-actions"})
+          with urllib.request.urlopen(req, timeout=60) as r:
+            items = json.loads(r.read().decode("utf-8"))
+
+          out_dir = "drawio-embed/light/resources"
+          os.makedirs(out_dir, exist_ok=True)
+
+          urls = []
+          for it in items:
+            name = it.get("name","")
+            if name.startswith("dia_") and name.endswith(".txt") and it.get("download_url"):
+              urls.append((name, it["download_url"]))
+
+          if not urls:
+            sys.stderr.write("No dia_*.txt files found from GitHub API\n")
+            sys.exit(1)
+
+          for name, url in sorted(urls):
+            req = urllib.request.Request(url, headers={"User-Agent":"gh-actions"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+              data = r.read()
+            with open(os.path.join(out_dir, name), "wb") as f:
+              f.write(data)
+
+          if os.path.exists("drawio-embed/light/resources/dia.txt") and not os.path.exists("drawio-embed/light/resources/dia_en.txt"):
+            import shutil
+            shutil.copyfile("drawio-embed/light/resources/dia.txt", "drawio-embed/light/resources/dia_en.txt")
+          PY
+
+          cp -r drawio-embed/light/resources/dia_*.txt drawio-embed/dark/resources/ 2>/dev/null || true
 
           mkdir -p drawio-embed/host
 
@@ -248,6 +277,8 @@ jobs:
           Synced: $(date -u)
           Light files: $(find drawio-embed/light -type f 2>/dev/null | wc -l)
           Dark files: $(find drawio-embed/dark -type f 2>/dev/null | wc -l)
+          Light languages: $(ls -1 drawio-embed/light/resources/dia_*.txt 2>/dev/null | wc -l)
+          Dark languages: $(ls -1 drawio-embed/dark/resources/dia_*.txt 2>/dev/null | wc -l)
           EOF
 
       - name: Verify
@@ -258,8 +289,8 @@ jobs:
             test -f "drawio-embed/$theme/js/PreConfig.js"
             test -f "drawio-embed/$theme/service-worker.js"
             test -f "drawio-embed/$theme/resources/dia_en.txt"
-            test -f "drawio-embed/$theme/resources/dia_de.txt"
-            echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files)"
+            test "$(ls -1 drawio-embed/$theme/resources/dia_*.txt 2>/dev/null | wc -l)" -ge 1
+            echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files, $(ls -1 drawio-embed/$theme/resources/dia_*.txt 2>/dev/null | wc -l) languages)"
           done
           test -f "drawio-embed/host/index.html"
           echo "✓ host ready"
