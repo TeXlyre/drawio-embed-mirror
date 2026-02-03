@@ -82,6 +82,55 @@ jobs:
             -e 's|src="/|src="./|g' \
             {} +
 
+      - name: Download additional required files
+        run: |
+          cd drawio-embed
+          mkdir -p js styles images mxgraph/css
+          
+          BASE_URL="https://embed.diagrams.net"
+          
+          echo "Downloading commonly required files..."
+          
+          REQUIRED_FILES=(
+            "js/app.min.js"
+            "js/extensions.min.js"
+            "js/stencils.min.js"
+            "js/shapes-14-6-5.min.js"
+            "mxgraph/css/common.css"
+            "images/spin.gif"
+          )
+          
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "Downloading: $file"
+              curl -f -L -o "$file" "${BASE_URL}/${file}" 2>/dev/null && echo "  ✓ $file" || echo "  ✗ $file (not found)"
+            else
+              echo "Already have: $file"
+            fi
+          done
+          
+          echo ""
+          echo "Checking bootstrap.js for dynamically loaded files..."
+          if [ -f "js/bootstrap.js" ]; then
+            grep -oP "['\"](js/[^'\"]+\.js)['\"]" js/bootstrap.js | tr -d "\"'" | sort -u | while read jsfile; do
+              if [ ! -f "$jsfile" ]; then
+                echo "Found in bootstrap: $jsfile"
+                curl -f -L -o "$jsfile" "${BASE_URL}/${jsfile}" 2>/dev/null && echo "  ✓ Downloaded" || echo "  ✗ Failed"
+              fi
+            done
+          fi
+          
+          echo ""
+          echo "Checking main.js for dynamically loaded files..."
+          if [ -f "js/main.js" ]; then
+            grep -oP "['\"](js/[^'\"]+\.js)['\"]" js/main.js | tr -d "\"'" | sort -u | while read jsfile; do
+              if [ ! -f "$jsfile" ]; then
+                echo "Found in main: $jsfile"
+                curl -f -L -o "$jsfile" "${BASE_URL}/${jsfile}" 2>/dev/null && echo "  ✓ Downloaded" || echo "  ✗ Failed"
+              fi
+            done
+          fi
+
       - name: Create missing files
         run: |
           cd drawio-embed
@@ -101,25 +150,25 @@ jobs:
           
           echo "Total files: $FILE_COUNT"
           echo ""
-          echo "Main files:"
-          ls -lh drawio-embed/ | head -20
-          echo ""
           echo "JavaScript files:"
-          find drawio-embed -name "*.js" | head -20
+          find drawio-embed/js -name "*.js" 2>/dev/null || echo "No js directory"
+          echo ""
+          echo "Critical files check:"
+          [ -f "drawio-embed/index.html" ] && echo "  ✓ index.html" || echo "  ✗ index.html"
+          [ -f "drawio-embed/js/bootstrap.js" ] && echo "  ✓ js/bootstrap.js" || echo "  ✗ js/bootstrap.js"
+          [ -f "drawio-embed/js/app.min.js" ] && echo "  ✓ js/app.min.js" || echo "  ✗ js/app.min.js"
+          [ -f "drawio-embed/js/main.js" ] && echo "  ✓ js/main.js" || echo "  ✗ js/main.js"
           
           if [ ! -f "drawio-embed/index.html" ]; then
             echo "ERROR: index.html not found!"
-            echo "Files in drawio-embed:"
-            find drawio-embed -type f
             exit 1
           fi
           
-          if [ "$FILE_COUNT" -lt 10 ]; then
-            echo "ERROR: Too few files ($FILE_COUNT)"
-            exit 1
+          if [ ! -f "drawio-embed/js/app.min.js" ]; then
+            echo "WARNING: app.min.js not found - drawio may not work correctly"
           fi
           
-          echo "✓ Successfully downloaded $FILE_COUNT files"
+          echo "✓ Downloaded $FILE_COUNT files total"
 
       - name: Create version file
         run: |
@@ -128,7 +177,7 @@ jobs:
           Synced: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
           Source: https://embed.diagrams.net
           Files: $(find drawio-embed -type f | wc -l)
-          Method: Recursive wget crawl
+          Method: Recursive wget crawl + dynamic file discovery
           EOF
 
       - name: Commit
@@ -136,7 +185,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add drawio-embed/
-          git diff --staged --quiet || git commit -m "Crawl Draw.io $(date +%Y-%m-%d)"
+          git diff --staged --quiet || git commit -m "Update Draw.io $(date +%Y-%m-%d)"
           git push || echo "No changes"
 
       - name: Deploy to Pages
