@@ -18,166 +18,145 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Crawl embed.diagrams.net
-        run: |
-          rm -rf drawio-embed
-          mkdir -p temp-download
-          
-          cd temp-download
-          
-          wget \
-            --recursive \
-            --level=5 \
-            --no-clobber \
-            --page-requisites \
-            --adjust-extension \
-            --span-hosts \
-            --convert-links \
-            --restrict-file-names=windows \
-            --domains=embed.diagrams.net \
-            --no-parent \
-            --accept='html,htm,css,js,json,svg,png,jpg,jpeg,gif,woff,woff2,ttf,eot,ico,xml' \
-            --reject='*export*,*connect*,*proxy*,*upload*,*import*' \
-            --timeout=30 \
-            --tries=3 \
-            --wait=0.5 \
-            --random-wait \
-            --user-agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' \
-            'https://embed.diagrams.net/?embed=1&proto=json&spin=1&libraries=1&ui=min'
-          
-          cd ..
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      - name: Reorganize and clean files
-        run: |
-          if [ -d "temp-download/embed.diagrams.net" ]; then
-            mv temp-download/embed.diagrams.net drawio-embed
-            rm -rf temp-download
-          else
-            mv temp-download drawio-embed
-          fi
-          
-          cd drawio-embed
-          
-          find . -type f -name "*@*" -o -name "*.tmp.html" | while read file; do
-            newname=$(echo "$file" | sed 's/@.*//; s/\.tmp\.html/.html/')
-            if [ "$newname" != "$file" ]; then
-              echo "Renaming: $file -> $newname"
-              mv "$file" "$newname"
-            fi
-          done
-          
-          if [ ! -f "index.html" ]; then
-            MAIN_FILE=$(find . -maxdepth 1 -name "index*.html" | head -1)
-            if [ -n "$MAIN_FILE" ]; then
-              mv "$MAIN_FILE" index.html
-            fi
-          fi
-          
-          find . -type f -name "*\?*" -delete
-          
-          find . -type f \( -name "*.html" -o -name "*.js" -o -name "*.css" \) -exec sed -i \
-            -e 's|https://embed\.diagrams\.net|.|g' \
-            -e 's|//embed\.diagrams\.net|.|g' \
-            -e 's|href="/|href="./|g' \
-            -e 's|src="/|src="./|g' \
-            {} +
+      - name: Install Puppeteer
+        run: npm install puppeteer
 
-      - name: Download additional required files
+      - name: Download with Puppeteer
         run: |
-          cd drawio-embed
-          mkdir -p js styles images mxgraph/css
-          
-          BASE_URL="https://embed.diagrams.net"
-          
-          echo "Downloading commonly required files..."
-          
-          REQUIRED_FILES=(
-            "js/app.min.js"
-            "js/extensions.min.js"
-            "js/stencils.min.js"
-            "js/shapes-14-6-5.min.js"
-            "mxgraph/css/common.css"
-            "images/spin.gif"
-          )
-          
-          for file in "${REQUIRED_FILES[@]}"; do
-            if [ ! -f "$file" ]; then
-              echo "Downloading: $file"
-              curl -f -L -o "$file" "${BASE_URL}/${file}" 2>/dev/null && echo "  ✓ $file" || echo "  ✗ $file (not found)"
-            else
-              echo "Already have: $file"
-            fi
-          done
-          
-          echo ""
-          echo "Checking bootstrap.js for dynamically loaded files..."
-          if [ -f "js/bootstrap.js" ]; then
-            grep -oP "['\"](js/[^'\"]+\.js)['\"]" js/bootstrap.js | tr -d "\"'" | sort -u | while read jsfile; do
-              if [ ! -f "$jsfile" ]; then
-                echo "Found in bootstrap: $jsfile"
-                curl -f -L -o "$jsfile" "${BASE_URL}/${jsfile}" 2>/dev/null && echo "  ✓ Downloaded" || echo "  ✗ Failed"
-              fi
-            done
-          fi
-          
-          echo ""
-          echo "Checking main.js for dynamically loaded files..."
-          if [ -f "js/main.js" ]; then
-            grep -oP "['\"](js/[^'\"]+\.js)['\"]" js/main.js | tr -d "\"'" | sort -u | while read jsfile; do
-              if [ ! -f "$jsfile" ]; then
-                echo "Found in main: $jsfile"
-                curl -f -L -o "$jsfile" "${BASE_URL}/${jsfile}" 2>/dev/null && echo "  ✓ Downloaded" || echo "  ✗ Failed"
-              fi
-            done
-          fi
+          cat > download.js << 'EOF'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
+          const path = require('path');
+          const https = require('https');
+
+          const BASE = 'https://embed.diagrams.net';
+          const downloaded = new Set();
+          const outDir = path.join(process.cwd(), 'drawio-embed');
+
+          function sanitizePath(url) {
+            let p = new URL(url).pathname;
+            if (p === '/' || !p) p = '/index.html';
+            return p.replace(/^\//, '');
+          }
+
+          function download(url, dest) {
+            return new Promise((resolve, reject) => {
+              https.get(url, (res) => {
+                if (res.statusCode === 301 || res.statusCode === 302) {
+                  download(res.headers.location, dest).then(resolve).catch(reject);
+                  return;
+                }
+                const file = fs.createWriteStream(dest);
+                res.pipe(file);
+                file.on('finish', () => { file.close(); resolve(); });
+                file.on('error', reject);
+              }).on('error', reject);
+            });
+          }
+
+          (async () => {
+            if (fs.existsSync(outDir)) fs.rmSync(outDir, { recursive: true });
+            fs.mkdirSync(outDir, { recursive: true });
+
+            const browser = await puppeteer.launch({ 
+              headless: 'new',
+              args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
+            const page = await browser.newPage();
+
+            page.on('response', async (response) => {
+              const url = response.url();
+              if (!url.startsWith(BASE)) return;
+              if (downloaded.has(url)) return;
+              if (response.status() !== 200) return;
+
+              downloaded.add(url);
+              const relPath = sanitizePath(url);
+              const fullPath = path.join(outDir, relPath);
+              const dir = path.dirname(fullPath);
+
+              try {
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                const buffer = await response.buffer();
+                fs.writeFileSync(fullPath, buffer);
+                console.log(`✓ ${relPath}`);
+              } catch (err) {
+                console.error(`✗ ${relPath}: ${err.message}`);
+              }
+            });
+
+            console.log('Loading Draw.io...');
+            await page.goto(BASE + '/?embed=1&proto=json&spin=1&libraries=1&ui=min', {
+              waitUntil: 'networkidle0',
+              timeout: 120000
+            });
+
+            console.log('Waiting for dynamic loads...');
+            await new Promise(resolve => setTimeout(resolve, 15000));
+
+            await browser.close();
+
+            console.log(`\nDownloaded ${downloaded.size} files`);
+            
+            fs.writeFileSync(
+              path.join(outDir, 'manifest.json'),
+              JSON.stringify({ 
+                synced: new Date().toISOString(),
+                files: downloaded.size 
+              }, null, 2)
+            );
+
+            process.exit(0);
+          })().catch(err => {
+            console.error('Error:', err);
+            process.exit(1);
+          });
+          EOF
+
+          node download.js
 
       - name: Create missing files
         run: |
           cd drawio-embed
           
-          echo '{"version":"mirror"}' > manifest.json
-          
           mkdir -p images js styles
-          echo '{"version":"mirror"}' > images/manifest.json
+          
+          if [ ! -f "images/manifest.json" ]; then
+            echo '{"version":"mirror"}' > images/manifest.json
+          fi
           
           if [ ! -f "js/PreConfig.js" ]; then
             echo "window.DRAWIO_CONFIG = {};" > js/PreConfig.js
           fi
 
-      - name: Verify download
+      - name: Verify
         run: |
           FILE_COUNT=$(find drawio-embed -type f | wc -l)
           
-          echo "Total files: $FILE_COUNT"
+          echo "Files: $FILE_COUNT"
           echo ""
-          echo "JavaScript files:"
-          find drawio-embed/js -name "*.js" 2>/dev/null || echo "No js directory"
-          echo ""
-          echo "Critical files check:"
-          [ -f "drawio-embed/index.html" ] && echo "  ✓ index.html" || echo "  ✗ index.html"
-          [ -f "drawio-embed/js/bootstrap.js" ] && echo "  ✓ js/bootstrap.js" || echo "  ✗ js/bootstrap.js"
-          [ -f "drawio-embed/js/app.min.js" ] && echo "  ✓ js/app.min.js" || echo "  ✗ js/app.min.js"
-          [ -f "drawio-embed/js/main.js" ] && echo "  ✓ js/main.js" || echo "  ✗ js/main.js"
+          echo "Critical files:"
+          [ -f "drawio-embed/index.html" ] && echo "  ✓ index.html" || echo "  ✗ index.html MISSING"
+          [ -f "drawio-embed/js/app.min.js" ] && echo "  ✓ app.min.js" || echo "  ✗ app.min.js MISSING"
+          [ -f "drawio-embed/js/bootstrap.js" ] && echo "  ✓ bootstrap.js" || echo "  ✗ bootstrap.js MISSING"
           
           if [ ! -f "drawio-embed/index.html" ]; then
-            echo "ERROR: index.html not found!"
+            echo "ERROR: index.html missing"
             exit 1
           fi
-          
-          if [ ! -f "drawio-embed/js/app.min.js" ]; then
-            echo "WARNING: app.min.js not found - drawio may not work correctly"
-          fi
-          
-          echo "✓ Downloaded $FILE_COUNT files total"
 
       - name: Create version file
         run: |
           cat > drawio-embed/VERSION.txt << EOF
           Draw.io Embed Mirror
-          Synced: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          Source: https://embed.diagrams.net
+          Synced: $(date -u)
           Files: $(find drawio-embed -type f | wc -l)
-          Method: Recursive wget crawl + dynamic file discovery
+          Method: Puppeteer (browser-based crawl)
           EOF
 
       - name: Commit
@@ -185,16 +164,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add drawio-embed/
-          git diff --staged --quiet || git commit -m "Update Draw.io $(date +%Y-%m-%d)"
-          git push || echo "No changes"
+          git diff --staged --quiet || git commit -m "Update $(date +%Y-%m-%d)"
+          git push || true
 
-      - name: Deploy to Pages
+      - name: Deploy
         uses: actions/configure-pages@v4
         
-      - name: Upload artifact
+      - name: Upload
         uses: actions/upload-pages-artifact@v3
         with:
           path: 'drawio-embed'
           
-      - name: Deploy
+      - name: Deploy Pages
         uses: actions/deploy-pages@v4
