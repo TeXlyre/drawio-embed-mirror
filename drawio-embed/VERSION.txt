@@ -1,5 +1,5 @@
 Draw.io Embed Mirror
-Synced: 2026-02-03 21:20:00 UTC
+Synced: 2026-02-03 21:23:04 UTC
 Source: https://embed.diagrams.net
-Files: 12
-Method: Recursive wget crawl
+Files: 18
+Method: Recursive wget crawl + dynamic file discovery
