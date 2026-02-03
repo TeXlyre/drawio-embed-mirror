@@ -86,6 +86,15 @@ jobs:
             fs.writeFileSync(appPath, html);
           }
 
+          async function forceFetch(page, paths) {
+            for (const p of paths) {
+              const url = `${BASE}${p.startsWith('/') ? p : `/${p}`}`;
+              try {
+                await page.goto(url, { waitUntil: 'networkidle2', timeout: 120000 });
+              } catch (_) {}
+            }
+          }
+
           (async () => {
             fs.rmSync(outDir, { recursive: true, force: true });
             fs.mkdirSync(outDir, { recursive: true });
@@ -137,6 +146,12 @@ jobs:
             await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
             await new Promise((r) => setTimeout(r, 15000));
 
+            await forceFetch(page, [
+              '/service-worker.js',
+              '/resources/dia_en.txt',
+              '/resources/dia_de.txt'
+            ]);
+
             await browser.close();
 
             const indexPath = path.join(outDir, 'index.html');
@@ -176,28 +191,16 @@ jobs:
           <!doctype html>
           <meta charset="utf-8" />
           <meta name="viewport" content="width=device-width,initial-scale=1" />
-          <title>Draw.io Embed Host</title>
+          <title>drawio-embed</title>
           <style>
-            html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; }
-            header { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid #ddd; }
-            header button { padding: 6px 10px; }
-            #wrap { height: calc(100% - 52px); }
+            html, body { height: 100%; margin: 0; }
             iframe { width: 100%; height: 100%; border: 0; display: block; }
-            textarea { width: 520px; height: 34px; }
           </style>
-          <header>
-            <button id="new">New</button>
-            <button id="exportPng">Export PNG</button>
-            <button id="exportXml">Export XML</button>
-            <button id="loadXml">Load XML</button>
-            <textarea id="xml" placeholder="Paste diagram XML here (for Load XML)"></textarea>
-            <span id="status">loading…</span>
-          </header>
-          <div id="wrap">
-            <iframe id="editor" allow="clipboard-read; clipboard-write"></iframe>
-          </div>
+          <iframe id="editor" allow="clipboard-read; clipboard-write"></iframe>
           <script>
-            const theme = 'light';
+            const sp = new URLSearchParams(location.search);
+            const theme = sp.get('theme') || 'light';
+            const ui = theme === 'dark' ? 'dark' : 'kennedy';
 
             const params = new URLSearchParams({
               embed: '1',
@@ -215,38 +218,18 @@ jobs:
               gl: '0',
               stealth: '1',
               offline: '1',
-              ui: 'kennedy'
+              ui
             });
 
             const iframe = document.getElementById('editor');
             iframe.src = `../${theme}/app.html?${params.toString()}`;
 
-            const statusEl = document.getElementById('status');
-            const xmlEl = document.getElementById('xml');
-
-            let editorReady = false;
-
             function post(action, extra = {}) {
-              if (!iframe.contentWindow) return;
               iframe.contentWindow.postMessage(JSON.stringify({ action, ...extra }), '*');
             }
 
-            function setStatus(s) { statusEl.textContent = s; }
-
             function blankMxfile() {
               return '<mxfile host="app.diagrams.net"><diagram name="Page-1"></diagram></mxfile>';
-            }
-
-            function loadXml(xml) {
-              post('load', { xml });
-            }
-
-            function requestExportPng() {
-              post('export', { format: 'png', spin: '1', base64: '1', scale: '1' });
-            }
-
-            function requestExportXml() {
-              post('export', { format: 'xml', spin: '1' });
             }
 
             window.addEventListener('message', (evt) => {
@@ -255,198 +238,9 @@ jobs:
               if (!msg || typeof msg !== 'object') return;
 
               if (msg.event === 'init') {
-                editorReady = true;
-                setStatus('ready');
-                loadXml(blankMxfile());
-                return;
-              }
-
-              if (msg.event === 'load') {
-                setStatus('loaded');
-                return;
-              }
-
-              if (msg.event === 'export') {
-                setStatus('exported');
-                if (msg.format === 'png' && msg.data) {
-                  const a = document.createElement('a');
-                  a.href = 'data:image/png;base64,' + msg.data;
-                  a.download = 'diagram.png';
-                  a.click();
-                } else if (msg.format === 'xml' && msg.data) {
-                  xmlEl.value = msg.data;
-                }
-                return;
-              }
-
-              if (msg.event === 'error') {
-                setStatus('error');
-                console.error(msg);
-                return;
+                post('load', { xml: blankMxfile() });
               }
             });
-
-            document.getElementById('new').addEventListener('click', () => {
-              if (!editorReady) return;
-              loadXml(blankMxfile());
-            });
-
-            document.getElementById('exportPng').addEventListener('click', () => {
-              if (!editorReady) return;
-              requestExportPng();
-            });
-
-            document.getElementById('exportXml').addEventListener('click', () => {
-              if (!editorReady) return;
-              requestExportXml();
-            });
-
-            document.getElementById('loadXml').addEventListener('click', () => {
-              if (!editorReady) return;
-              const xml = xmlEl.value.trim();
-              if (xml) loadXml(xml);
-            });
-
-            setStatus('waiting for init…');
-          </script>
-          EOF
-
-          cat > drawio-embed/host/dark.html << 'EOF'
-          <!doctype html>
-          <meta charset="utf-8" />
-          <meta name="viewport" content="width=device-width,initial-scale=1" />
-          <title>Draw.io Embed Host (Dark)</title>
-          <style>
-            html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; }
-            header { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid #333; }
-            header button { padding: 6px 10px; }
-            #wrap { height: calc(100% - 52px); }
-            iframe { width: 100%; height: 100%; border: 0; display: block; }
-            textarea { width: 520px; height: 34px; }
-          </style>
-          <header>
-            <button id="new">New</button>
-            <button id="exportPng">Export PNG</button>
-            <button id="exportXml">Export XML</button>
-            <button id="loadXml">Load XML</button>
-            <textarea id="xml" placeholder="Paste diagram XML here (for Load XML)"></textarea>
-            <span id="status">loading…</span>
-          </header>
-          <div id="wrap">
-            <iframe id="editor" allow="clipboard-read; clipboard-write"></iframe>
-          </div>
-          <script>
-            const theme = 'dark';
-
-            const params = new URLSearchParams({
-              embed: '1',
-              proto: 'json',
-              spin: '1',
-              libraries: '1',
-              saveAndExit: '0',
-              noSaveBtn: '1',
-              noExitBtn: '1',
-              db: '0',
-              od: '0',
-              gapi: '0',
-              tr: '0',
-              gh: '0',
-              gl: '0',
-              stealth: '1',
-              offline: '1',
-              ui: 'dark'
-            });
-
-            const iframe = document.getElementById('editor');
-            iframe.src = `../${theme}/app.html?${params.toString()}`;
-
-            const statusEl = document.getElementById('status');
-            const xmlEl = document.getElementById('xml');
-
-            let editorReady = false;
-
-            function post(action, extra = {}) {
-              if (!iframe.contentWindow) return;
-              iframe.contentWindow.postMessage(JSON.stringify({ action, ...extra }), '*');
-            }
-
-            function setStatus(s) { statusEl.textContent = s; }
-
-            function blankMxfile() {
-              return '<mxfile host="app.diagrams.net"><diagram name="Page-1"></diagram></mxfile>';
-            }
-
-            function loadXml(xml) {
-              post('load', { xml });
-            }
-
-            function requestExportPng() {
-              post('export', { format: 'png', spin: '1', base64: '1', scale: '1' });
-            }
-
-            function requestExportXml() {
-              post('export', { format: 'xml', spin: '1' });
-            }
-
-            window.addEventListener('message', (evt) => {
-              let msg;
-              try { msg = JSON.parse(evt.data); } catch { return; }
-              if (!msg || typeof msg !== 'object') return;
-
-              if (msg.event === 'init') {
-                editorReady = true;
-                setStatus('ready');
-                loadXml(blankMxfile());
-                return;
-              }
-
-              if (msg.event === 'load') {
-                setStatus('loaded');
-                return;
-              }
-
-              if (msg.event === 'export') {
-                setStatus('exported');
-                if (msg.format === 'png' && msg.data) {
-                  const a = document.createElement('a');
-                  a.href = 'data:image/png;base64,' + msg.data;
-                  a.download = 'diagram.png';
-                  a.click();
-                } else if (msg.format === 'xml' && msg.data) {
-                  xmlEl.value = msg.data;
-                }
-                return;
-              }
-
-              if (msg.event === 'error') {
-                setStatus('error');
-                console.error(msg);
-                return;
-              }
-            });
-
-            document.getElementById('new').addEventListener('click', () => {
-              if (!editorReady) return;
-              loadXml(blankMxfile());
-            });
-
-            document.getElementById('exportPng').addEventListener('click', () => {
-              if (!editorReady) return;
-              requestExportPng();
-            });
-
-            document.getElementById('exportXml').addEventListener('click', () => {
-              if (!editorReady) return;
-              requestExportXml();
-            });
-
-            document.getElementById('loadXml').addEventListener('click', () => {
-              if (!editorReady) return;
-              const xml = xmlEl.value.trim();
-              if (xml) loadXml(xml);
-            });
-
-            setStatus('waiting for init…');
           </script>
           EOF
 
@@ -463,11 +257,13 @@ jobs:
             test -f "drawio-embed/$theme/index.html"
             test -f "drawio-embed/$theme/app.html"
             test -f "drawio-embed/$theme/js/PreConfig.js"
+            test -f "drawio-embed/$theme/service-worker.js"
+            test -f "drawio-embed/$theme/resources/dia_en.txt"
+            test -f "drawio-embed/$theme/resources/dia_de.txt"
             echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files)"
           done
           test -f "drawio-embed/host/index.html"
-          test -f "drawio-embed/host/dark.html"
-          echo "✓ host pages ready"
+          echo "✓ host ready"
 
       - name: Commit
         run: |
