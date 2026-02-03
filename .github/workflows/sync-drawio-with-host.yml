@@ -172,12 +172,11 @@ jobs:
 
           for theme in light dark; do
             mkdir -p "drawio-embed/$theme/resources"
-
-            cat > "drawio-embed/$theme/service-worker.js" << 'EOF'
-            self.addEventListener('install', (e) => { self.skipWaiting(); });
-            self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
-            self.addEventListener('fetch', () => {});
-            EOF
+            cat > "drawio-embed/$theme/service-worker.js" <<'EOF'
+          self.addEventListener('install', () => { self.skipWaiting(); });
+          self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
+          self.addEventListener('fetch', () => {});
+          EOF
           done
 
           curl -fsSL "https://raw.githubusercontent.com/jgraph/drawio/dev/src/main/webapp/resources/dia_en.txt" -o "drawio-embed/light/resources/dia_en.txt"
@@ -187,7 +186,7 @@ jobs:
 
           mkdir -p drawio-embed/host
 
-          cat > drawio-embed/host/index.html << 'EOF'
+          cat > drawio-embed/host/index.html <<'EOF'
           <!doctype html>
           <meta charset="utf-8" />
           <meta name="viewport" content="width=device-width,initial-scale=1" />
