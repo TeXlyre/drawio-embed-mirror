@@ -1,4 +1,5 @@
 Draw.io Embed Mirror
-Synced: Tue Feb  3 21:32:37 UTC 2026
-Files: 26
-Method: Puppeteer (browser-based crawl)
+Synced: Tue Feb  3 21:40:05 UTC 2026
+Files: 25
+Method: Puppeteer (minimal configuration)
+Configuration: embed=1, stealth=1, offline=1, no cloud integrations
