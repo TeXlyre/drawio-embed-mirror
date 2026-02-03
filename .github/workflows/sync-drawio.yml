@@ -1,0 +1,140 @@
+name: Sync Draw.io Embed
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/sync-drawio.yml'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download Draw.io embed files
+        run: |
+          echo "Downloading Draw.io embed files..."
+          
+          mkdir -p drawio-embed
+          cd drawio-embed
+          
+          BASE_URL="https://embed.diagrams.net"
+          
+          echo "Fetching main HTML..."
+          curl -L -o index.html "${BASE_URL}/?embed=1"
+          
+          echo "Extracting resource URLs from HTML..."
+          grep -oP '(src|href)="[^"]*"' index.html | \
+            grep -oP '"[^"]*"' | \
+            tr -d '"' | \
+            grep -E '\.(js|css|json|svg|png|woff2?|ttf|eot)' | \
+            sort -u > resources.txt
+          
+          echo "Downloading resources..."
+          while IFS= read -r resource; do
+            if [[ $resource == http* ]]; then
+              url="$resource"
+              path=$(echo "$resource" | sed 's|https\?://[^/]*/||')
+            else
+              url="${BASE_URL}${resource}"
+              path="${resource#/}"
+            fi
+            
+            dir=$(dirname "$path")
+            mkdir -p "$dir"
+            
+            echo "Downloading: $url -> $path"
+            curl -L -f -o "$path" "$url" || echo "Failed to download: $url"
+          done < resources.txt
+          
+          rm resources.txt
+          
+          cd ..
+          
+          echo "Fetching Draw.io version info..."
+          VERSION_INFO=$(curl -s "https://www.diagrams.net/service/status")
+          echo "$VERSION_INFO" > drawio-embed/version-info.json
+          
+          VERSION=$(echo "$VERSION_INFO" | grep -oP '"version":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+          echo "Draw.io version: $VERSION"
+          echo "DRAWIO_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Create version file
+        run: |
+          cat > drawio-embed/VERSION.txt << EOF
+          Draw.io Embed Mirror
+          Synced: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Version: ${DRAWIO_VERSION}
+          Source: https://embed.diagrams.net
+          EOF
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          git add drawio-embed/
+          if git diff --staged --quiet; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No changes detected"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Changes detected"
+          fi
+
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add drawio-embed/
+          git commit -m "Update Draw.io embed to version ${DRAWIO_VERSION} - $(date -u +"%Y-%m-%d")"
+          git push
+
+      - name: Setup Pages
+        if: steps.check_changes.outputs.has_changes == 'true'
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        if: steps.check_changes.outputs.has_changes == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'drawio-embed'
+
+      - name: Deploy to GitHub Pages
+        if: steps.check_changes.outputs.has_changes == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Create release
+        if: steps.check_changes.outputs.has_changes == 'true'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ env.DRAWIO_VERSION }}-${{ github.run_number }}
+          release_name: Draw.io ${{ env.DRAWIO_VERSION }}
+          body: |
+            Automated sync of Draw.io embed
+            Version: ${{ env.DRAWIO_VERSION }}
+            Synced: ${{ github.event.head_commit.timestamp }}
+          draft: false
+          prerelease: false
+        continue-on-error: true
