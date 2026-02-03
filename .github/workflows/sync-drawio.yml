@@ -56,6 +56,36 @@ jobs:
             fs.writeFileSync(filePath, data);
           }
 
+          function ensureStubs(themeDir) {
+            const jsDir = path.join(themeDir, 'js');
+            fs.mkdirSync(jsDir, { recursive: true });
+
+            const pre = path.join(jsDir, 'PreConfig.js');
+            if (!fs.existsSync(pre)) {
+              fs.writeFileSync(pre, 'window.DRAWIO_CONFIG = window.DRAWIO_CONFIG || {};\n');
+            }
+
+            const post = path.join(jsDir, 'PostConfig.js');
+            if (!fs.existsSync(post)) {
+              fs.writeFileSync(post, '\n');
+            }
+          }
+
+          function patchAppHtml(themeDir) {
+            const appPath = path.join(themeDir, 'app.html');
+            if (!fs.existsSync(appPath)) return;
+
+            let html = fs.readFileSync(appPath, 'utf8');
+
+            if (!/<base\s/i.test(html)) {
+              html = html.replace(/<head([^>]*)>/i, '<head$1>\n<base href="./">');
+            }
+
+            html = html.replace(/\b(src|href)="\/(?!\/)/g, '$1="./');
+
+            fs.writeFileSync(appPath, html);
+          }
+
           (async () => {
             fs.rmSync(outDir, { recursive: true, force: true });
             fs.mkdirSync(outDir, { recursive: true });
@@ -99,7 +129,7 @@ jobs:
 
             const params =
               `embed=1&proto=json&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1` +
-              `&db=0&od=0&gapi=0&tr=0&gh=0&gl=0&stealth=1&offline=1&ui=${encodeURIComponent(ui)}`;
+              `&db=0&od=0&gapi=0&tr=0&gh=0&gl=0&stealth=1&ui=${encodeURIComponent(ui)}`;
 
             const url = `${BASE}/?${params}`;
             process.stdout.write(`\nLoading: ${url}\n\n`);
@@ -127,6 +157,9 @@ jobs:
 
             safeWrite(indexPath, redirectHtml);
 
+            ensureStubs(outDir);
+            patchAppHtml(outDir);
+
             process.stdout.write(`\n${outName}: Downloaded ${downloaded.size} files\n`);
           })().catch((err) => {
             process.stderr.write(`Error: ${err && err.stack ? err.stack : err}\n`);
@@ -149,6 +182,7 @@ jobs:
           for theme in light dark; do
             test -f "drawio-embed/$theme/index.html"
             test -f "drawio-embed/$theme/app.html"
+            test -f "drawio-embed/$theme/js/PreConfig.js"
             echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files)"
           done
 
