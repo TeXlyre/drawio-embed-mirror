@@ -30,91 +30,192 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install wget
-        run: sudo apt-get update && sudo apt-get install -y wget
-
-      - name: Download Draw.io embed
+      - name: Install dependencies
         run: |
-          echo "Downloading Draw.io embed application..."
-          
-          rm -rf drawio-embed
-          mkdir -p drawio-embed
-          cd drawio-embed
-          
-          echo "Mirroring embed.diagrams.net..."
-          wget \
-            --mirror \
-            --convert-links \
-            --adjust-extension \
-            --page-requisites \
-            --no-parent \
-            --no-host-directories \
-            --restrict-file-names=windows \
-            --execute robots=off \
-            --wait=0.5 \
-            --random-wait \
-            --reject-regex='(connect|plugins|proxy|import|export|server)' \
-            --accept='html,css,js,json,svg,png,jpg,jpeg,gif,woff,woff2,ttf,eot' \
-            --timeout=30 \
-            --tries=3 \
-            'https://embed.diagrams.net/?embed=1&proto=json&ui=min&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1'
-          
-          cd ..
+          npm install -g puppeteer
+          npm install puppeteer
 
-      - name: Reorganize files
+      - name: Download Draw.io embed with Puppeteer
         run: |
-          cd drawio-embed
-          
-          if [ -d "embed.diagrams.net" ]; then
-            mv embed.diagrams.net/* . 2>/dev/null || true
-            rmdir embed.diagrams.net 2>/dev/null || true
-          fi
-          
-          find . -name "*.html" -type f -exec sed -i 's|https://embed.diagrams.net||g' {} +
-          find . -name "*.html" -type f -exec sed -i 's|http://embed.diagrams.net||g' {} +
-          find . -name "*.js" -type f -exec sed -i 's|https://embed.diagrams.net||g' {} +
-          find . -name "*.css" -type f -exec sed -i 's|https://embed.diagrams.net||g' {} +
-          
-          if [ ! -f "index.html" ]; then
-            find . -name "*embed=1*.html" -type f | head -1 | xargs -I {} cp {} index.html
-          fi
-          
-          cd ..
+          cat > download-drawio.js << 'SCRIPT'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
+          const path = require('path');
+          const https = require('https');
 
-      - name: Get Draw.io version
-        run: |
-          VERSION=$(grep -oP 'VERSION\s*=\s*"\K[^"]+' drawio-embed/*.js 2>/dev/null | head -1 || echo "unknown")
-          if [ "$VERSION" = "unknown" ]; then
-            VERSION=$(date +%Y%m%d)
-          fi
-          echo "DRAWIO_VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Draw.io version: $VERSION"
+          const downloadedUrls = new Set();
+          const urlToPath = new Map();
+
+          function sanitizePath(url) {
+            const parsed = new URL(url);
+            let pathname = parsed.pathname;
+            if (pathname === '/' || pathname === '') {
+              pathname = '/index.html';
+            }
+            pathname = pathname.replace(/\?.*$/, '');
+            return pathname;
+          }
+
+          async function downloadFile(url, destPath) {
+            return new Promise((resolve, reject) => {
+              const file = fs.createWriteStream(destPath);
+              https.get(url, (response) => {
+                if (response.statusCode === 302 || response.statusCode === 301) {
+                  const redirectUrl = response.headers.location;
+                  file.close();
+                  fs.unlinkSync(destPath);
+                  downloadFile(redirectUrl, destPath).then(resolve).catch(reject);
+                  return;
+                }
+                response.pipe(file);
+                file.on('finish', () => {
+                  file.close();
+                  resolve();
+                });
+              }).on('error', (err) => {
+                fs.unlinkSync(destPath);
+                reject(err);
+              });
+            });
+          }
+
+          (async () => {
+            const browser = await puppeteer.launch({
+              headless: 'new',
+              args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
+            
+            const page = await browser.newPage();
+            
+            const outDir = path.join(process.cwd(), 'drawio-embed');
+            if (fs.existsSync(outDir)) {
+              fs.rmSync(outDir, { recursive: true });
+            }
+            fs.mkdirSync(outDir, { recursive: true });
+
+            await page.setRequestInterception(true);
+            
+            page.on('request', (request) => {
+              const url = request.url();
+              if (url.startsWith('https://embed.diagrams.net/')) {
+                const relativePath = sanitizePath(url);
+                urlToPath.set(url, relativePath);
+                downloadedUrls.add(url);
+              }
+              request.continue();
+            });
+
+            page.on('response', async (response) => {
+              const url = response.url();
+              
+              if (!url.startsWith('https://embed.diagrams.net/')) {
+                return;
+              }
+
+              if (response.status() !== 200) {
+                return;
+              }
+
+              const contentType = response.headers()['content-type'] || '';
+              const validTypes = [
+                'text/html',
+                'text/css',
+                'application/javascript',
+                'text/javascript',
+                'application/json',
+                'image/',
+                'font/',
+                'application/font'
+              ];
+
+              if (!validTypes.some(type => contentType.includes(type))) {
+                return;
+              }
+
+              try {
+                const relativePath = sanitizePath(url);
+                const fullPath = path.join(outDir, relativePath);
+                const dir = path.dirname(fullPath);
+                
+                if (!fs.existsSync(dir)) {
+                  fs.mkdirSync(dir, { recursive: true });
+                }
+
+                if (contentType.includes('text/') || contentType.includes('application/javascript') || contentType.includes('application/json')) {
+                  const text = await response.text();
+                  fs.writeFileSync(fullPath, text, 'utf-8');
+                  console.log(`Saved text file: ${relativePath}`);
+                } else {
+                  const buffer = await response.buffer();
+                  fs.writeFileSync(fullPath, buffer);
+                  console.log(`Saved binary file: ${relativePath}`);
+                }
+              } catch (error) {
+                console.error(`Error saving ${url}:`, error.message);
+              }
+            });
+
+            console.log('Loading Draw.io embed...');
+            await page.goto('https://embed.diagrams.net/?embed=1&proto=json&ui=min&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1', {
+              waitUntil: 'networkidle2',
+              timeout: 60000
+            });
+
+            await page.waitForTimeout(10000);
+
+            console.log('Scrolling to load lazy resources...');
+            await page.evaluate(() => {
+              window.scrollTo(0, document.body.scrollHeight);
+            });
+            await page.waitForTimeout(3000);
+
+            await browser.close();
+
+            console.log(`Downloaded ${downloadedUrls.size} unique URLs`);
+
+            const indexPath = path.join(outDir, 'index.html');
+            if (!fs.existsSync(indexPath)) {
+              const possibleIndexes = fs.readdirSync(outDir).filter(f => f.endsWith('.html'));
+              if (possibleIndexes.length > 0) {
+                fs.copyFileSync(path.join(outDir, possibleIndexes[0]), indexPath);
+              }
+            }
+
+            const versionInfo = {
+              version: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              synced: new Date().toISOString(),
+              source: 'https://embed.diagrams.net',
+              filesDownloaded: downloadedUrls.size
+            };
+            fs.writeFileSync(
+              path.join(outDir, 'manifest.json'),
+              JSON.stringify(versionInfo, null, 2)
+            );
+
+            console.log('Download complete!');
+          })();
+          SCRIPT
+
+          node download-drawio.js
 
       - name: Create version file
         run: |
+          VERSION=$(date +%Y%m%d)
+          echo "DRAWIO_VERSION=$VERSION" >> $GITHUB_ENV
+          
           cat > drawio-embed/VERSION.txt << EOF
           Draw.io Embed Mirror
           Synced: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          Version: ${DRAWIO_VERSION}
+          Version: ${VERSION}
           Source: https://embed.diagrams.net
-          Mirror: Automated via GitHub Actions
-          EOF
-
-      - name: Create manifest
-        run: |
-          cat > drawio-embed/manifest.json << EOF
-          {
-            "version": "${DRAWIO_VERSION}",
-            "synced": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-            "source": "https://embed.diagrams.net",
-            "files": $(find drawio-embed -type f | wc -l)
-          }
+          Mirror: Automated via GitHub Actions with Puppeteer
           EOF
 
       - name: Verify download
         run: |
           if [ ! -f "drawio-embed/index.html" ]; then
             echo "ERROR: index.html not found!"
+            ls -la drawio-embed/
             exit 1
           fi
           
@@ -125,6 +226,8 @@ jobs:
           fi
           
           echo "Successfully downloaded $FILE_COUNT files"
+          echo "## Files Downloaded" >> $GITHUB_STEP_SUMMARY
+          echo "Total: $FILE_COUNT" >> $GITHUB_STEP_SUMMARY
 
       - name: Check for changes
         id: check_changes
