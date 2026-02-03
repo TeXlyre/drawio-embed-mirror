@@ -30,53 +30,65 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Download Draw.io embed files
+      - name: Install wget
+        run: sudo apt-get update && sudo apt-get install -y wget
+
+      - name: Download Draw.io embed
         run: |
-          echo "Downloading Draw.io embed files..."
+          echo "Downloading Draw.io embed application..."
           
+          rm -rf drawio-embed
           mkdir -p drawio-embed
           cd drawio-embed
           
-          BASE_URL="https://embed.diagrams.net"
-          
-          echo "Fetching main HTML..."
-          curl -L -o index.html "${BASE_URL}/?embed=1"
-          
-          echo "Extracting resource URLs from HTML..."
-          grep -oP '(src|href)="[^"]*"' index.html | \
-            grep -oP '"[^"]*"' | \
-            tr -d '"' | \
-            grep -E '\.(js|css|json|svg|png|woff2?|ttf|eot)' | \
-            sort -u > resources.txt
-          
-          echo "Downloading resources..."
-          while IFS= read -r resource; do
-            if [[ $resource == http* ]]; then
-              url="$resource"
-              path=$(echo "$resource" | sed 's|https\?://[^/]*/||')
-            else
-              url="${BASE_URL}${resource}"
-              path="${resource#/}"
-            fi
-            
-            dir=$(dirname "$path")
-            mkdir -p "$dir"
-            
-            echo "Downloading: $url -> $path"
-            curl -L -f -o "$path" "$url" || echo "Failed to download: $url"
-          done < resources.txt
-          
-          rm resources.txt
+          echo "Mirroring embed.diagrams.net..."
+          wget \
+            --mirror \
+            --convert-links \
+            --adjust-extension \
+            --page-requisites \
+            --no-parent \
+            --no-host-directories \
+            --restrict-file-names=windows \
+            --execute robots=off \
+            --wait=0.5 \
+            --random-wait \
+            --reject-regex='(connect|plugins|proxy|import|export|server)' \
+            --accept='html,css,js,json,svg,png,jpg,jpeg,gif,woff,woff2,ttf,eot' \
+            --timeout=30 \
+            --tries=3 \
+            'https://embed.diagrams.net/?embed=1&proto=json&ui=min&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1'
           
           cd ..
+
+      - name: Reorganize files
+        run: |
+          cd drawio-embed
           
-          echo "Fetching Draw.io version info..."
-          VERSION_INFO=$(curl -s "https://www.diagrams.net/service/status")
-          echo "$VERSION_INFO" > drawio-embed/version-info.json
+          if [ -d "embed.diagrams.net" ]; then
+            mv embed.diagrams.net/* . 2>/dev/null || true
+            rmdir embed.diagrams.net 2>/dev/null || true
+          fi
           
-          VERSION=$(echo "$VERSION_INFO" | grep -oP '"version":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
-          echo "Draw.io version: $VERSION"
+          find . -name "*.html" -type f -exec sed -i 's|https://embed.diagrams.net||g' {} +
+          find . -name "*.html" -type f -exec sed -i 's|http://embed.diagrams.net||g' {} +
+          find . -name "*.js" -type f -exec sed -i 's|https://embed.diagrams.net||g' {} +
+          find . -name "*.css" -type f -exec sed -i 's|https://embed.diagrams.net||g' {} +
+          
+          if [ ! -f "index.html" ]; then
+            find . -name "*embed=1*.html" -type f | head -1 | xargs -I {} cp {} index.html
+          fi
+          
+          cd ..
+
+      - name: Get Draw.io version
+        run: |
+          VERSION=$(grep -oP 'VERSION\s*=\s*"\K[^"]+' drawio-embed/*.js 2>/dev/null | head -1 || echo "unknown")
+          if [ "$VERSION" = "unknown" ]; then
+            VERSION=$(date +%Y%m%d)
+          fi
           echo "DRAWIO_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Draw.io version: $VERSION"
 
       - name: Create version file
         run: |
@@ -85,7 +97,34 @@ jobs:
           Synced: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
           Version: ${DRAWIO_VERSION}
           Source: https://embed.diagrams.net
+          Mirror: Automated via GitHub Actions
           EOF
+
+      - name: Create manifest
+        run: |
+          cat > drawio-embed/manifest.json << EOF
+          {
+            "version": "${DRAWIO_VERSION}",
+            "synced": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "source": "https://embed.diagrams.net",
+            "files": $(find drawio-embed -type f | wc -l)
+          }
+          EOF
+
+      - name: Verify download
+        run: |
+          if [ ! -f "drawio-embed/index.html" ]; then
+            echo "ERROR: index.html not found!"
+            exit 1
+          fi
+          
+          FILE_COUNT=$(find drawio-embed -type f | wc -l)
+          if [ "$FILE_COUNT" -lt 5 ]; then
+            echo "ERROR: Too few files downloaded ($FILE_COUNT)"
+            exit 1
+          fi
+          
+          echo "Successfully downloaded $FILE_COUNT files"
 
       - name: Check for changes
         id: check_changes
@@ -97,6 +136,7 @@ jobs:
           else
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "Changes detected"
+            git diff --staged --stat
           fi
 
       - name: Commit and push changes
@@ -109,32 +149,22 @@ jobs:
           git push
 
       - name: Setup Pages
-        if: steps.check_changes.outputs.has_changes == 'true'
         uses: actions/configure-pages@v4
 
       - name: Upload artifact
-        if: steps.check_changes.outputs.has_changes == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: 'drawio-embed'
 
       - name: Deploy to GitHub Pages
-        if: steps.check_changes.outputs.has_changes == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Create release
+      - name: Summary
         if: steps.check_changes.outputs.has_changes == 'true'
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v${{ env.DRAWIO_VERSION }}-${{ github.run_number }}
-          release_name: Draw.io ${{ env.DRAWIO_VERSION }}
-          body: |
-            Automated sync of Draw.io embed
-            Version: ${{ env.DRAWIO_VERSION }}
-            Synced: ${{ github.event.head_commit.timestamp }}
-          draft: false
-          prerelease: false
-        continue-on-error: true
+        run: |
+          echo "## Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${DRAWIO_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Files**: $(find drawio-embed -type f | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" >> $GITHUB_STEP_SUMMARY
