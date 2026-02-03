@@ -4,11 +4,6 @@ on:
   schedule:
     - cron: '0 2 * * 0'
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/sync-drawio.yml'
 
 permissions:
   contents: write
@@ -22,112 +17,103 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Clone drawio repository
+      - name: Download embed.diagrams.net using wget mirror
         run: |
-          git clone --depth 1 https://github.com/jgraph/drawio.git drawio-source
+          rm -rf drawio-embed
+          mkdir -p drawio-embed
+          
+          wget \
+            --mirror \
+            --page-requisites \
+            --adjust-extension \
+            --convert-links \
+            --no-parent \
+            --no-host-directories \
+            --directory-prefix=drawio-embed \
+            --accept='html,htm,css,js,json,svg,png,jpg,jpeg,gif,woff,woff2,ttf,eot,ico' \
+            --reject='connect*,proxy*,import*,export*' \
+            --span-hosts \
+            --domains=embed.diagrams.net,www.draw.io,viewer.diagrams.net \
+            --level=3 \
+            --wait=0.5 \
+            --random-wait \
+            --user-agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' \
+            'https://embed.diagrams.net/?embed=1&proto=json&spin=1&libraries=1&ui=min'
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Build drawio
+      - name: Reorganize files
         run: |
-          cd drawio-source/src/main/webapp
+          cd drawio-embed
           
-          echo "Preparing drawio embed files..."
+          if [ -d "embed.diagrams.net" ]; then
+            shopt -s dotglob
+            mv embed.diagrams.net/* ./ 2>/dev/null || true
+            rm -rf embed.diagrams.net
+          fi
           
-          rm -rf ../../../drawio-embed
-          mkdir -p ../../../drawio-embed
-          
-          DIRS_TO_COPY="js styles images mxgraph math math4 resources stencils plugins shapes fonts connect"
-          
-          for dir in $DIRS_TO_COPY; do
-            if [ -d "$dir" ]; then
-              echo "Copying $dir..."
-              cp -r "$dir" ../../../drawio-embed/
-            else
-              echo "Skipping $dir (not found)"
+          if [ ! -f "index.html" ]; then
+            MAIN_HTML=$(find . -maxdepth 1 -name "*.html" | head -1)
+            if [ -n "$MAIN_HTML" ]; then
+              cp "$MAIN_HTML" index.html
             fi
-          done
-          
-          if [ -f "index.html" ]; then
-            cp index.html ../../../drawio-embed/
           fi
           
-          if [ -f "favicon.ico" ]; then
-            cp favicon.ico ../../../drawio-embed/
-          fi
+          find . -type f \( -name "*.html" -o -name "*.js" -o -name "*.css" \) -exec sed -i \
+            -e 's|https://embed\.diagrams\.net/|./|g' \
+            -e 's|http://embed\.diagrams\.net/|./|g' \
+            -e 's|//embed\.diagrams\.net/|./|g' \
+            {} +
           
-          cd ../../../
-          
-          echo "Files copied successfully"
-          ls -la drawio-embed/
-
-      - name: Get drawio version
-        run: |
-          cd drawio-source
-          VERSION=$(git describe --tags --always 2>/dev/null || echo "unknown")
-          if [ "$VERSION" = "unknown" ]; then
-            VERSION=$(date +%Y%m%d)
-          fi
           cd ..
-          echo "DRAWIO_VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Draw.io version: $VERSION"
 
-      - name: Create version file
+      - name: Extract version info
+        id: version
+        run: |
+          VERSION=$(grep -oP 'VERSION\s*=\s*"\K[^"]+' drawio-embed/*.js 2>/dev/null | head -1 || date +%Y%m%d)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "DRAWIO_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Create metadata files
         run: |
           cat > drawio-embed/VERSION.txt << EOF
           Draw.io Embed Mirror
           Synced: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
           Version: ${DRAWIO_VERSION}
-          Source: https://github.com/jgraph/drawio
-          Mirror: Official drawio repository clone
+          Source: https://embed.diagrams.net
+          Files: $(find drawio-embed -type f | wc -l)
           EOF
-
-      - name: Create manifest
-        run: |
+          
           cat > drawio-embed/manifest.json << EOF
           {
             "version": "${DRAWIO_VERSION}",
             "synced": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-            "source": "https://github.com/jgraph/drawio",
+            "source": "https://embed.diagrams.net",
             "files": $(find drawio-embed -type f | wc -l)
           }
           EOF
 
-      - name: Verify build
+      - name: Verify download
         run: |
+          FILE_COUNT=$(find drawio-embed -type f | wc -l)
+          
           if [ ! -f "drawio-embed/index.html" ]; then
             echo "ERROR: index.html not found!"
-            echo "Contents of drawio-embed:"
             ls -la drawio-embed/
             exit 1
           fi
           
-          if [ ! -d "drawio-embed/js" ]; then
-            echo "ERROR: js directory not found!"
-            exit 1
-          fi
-          
-          FILE_COUNT=$(find drawio-embed -type f | wc -l)
           if [ "$FILE_COUNT" -lt 10 ]; then
-            echo "ERROR: Too few files ($FILE_COUNT)"
+            echo "ERROR: Too few files downloaded ($FILE_COUNT)"
             exit 1
           fi
           
-          echo "Successfully prepared $FILE_COUNT files"
-          echo "## Build Verification" >> $GITHUB_STEP_SUMMARY
-          echo "- Total files: $FILE_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "- index.html: ✓" >> $GITHUB_STEP_SUMMARY
-          echo "- js directory: ✓" >> $GITHUB_STEP_SUMMARY
-
-      - name: Cleanup
-        run: |
-          rm -rf drawio-source
+          echo "✓ Downloaded $FILE_COUNT files successfully"
+          echo "✓ index.html exists"
+          
+          echo "## Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Version: ${DRAWIO_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- Files: $FILE_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- Timestamp: $(date -u)" >> $GITHUB_STEP_SUMMARY
 
       - name: Check for changes
         id: check_changes
@@ -139,34 +125,23 @@ jobs:
           else
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "Changes detected"
-            git diff --staged --stat
           fi
 
-      - name: Commit and push changes
+      - name: Commit and push
         if: steps.check_changes.outputs.has_changes == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add drawio-embed/
-          git commit -m "Update Draw.io embed to version ${DRAWIO_VERSION} - $(date -u +"%Y-%m-%d")"
+          git commit -m "Update Draw.io embed ${DRAWIO_VERSION} - $(date +%Y-%m-%d)"
           git push
 
-      - name: Setup Pages
+      - name: Setup and deploy to Pages
         uses: actions/configure-pages@v4
-
+        
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: 'drawio-embed'
-
-      - name: Deploy to GitHub Pages
-        id: deployment
+          
+      - name: Deploy to Pages
         uses: actions/deploy-pages@v4
-
-      - name: Summary
-        run: |
-          echo "## Deploy Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: ${DRAWIO_VERSION}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
-          echo "- **Files**: $(find drawio-embed -type f | wc -l)" >> $GITHUB_STEP_SUMMARY
-          echo "- **URL**: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" >> $GITHUB_STEP_SUMMARY
