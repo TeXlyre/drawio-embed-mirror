@@ -86,15 +86,6 @@ jobs:
             fs.writeFileSync(appPath, html);
           }
 
-          async function forceFetch(page, paths) {
-            for (const p of paths) {
-              const url = `${BASE}${p.startsWith('/') ? p : `/${p}`}`;
-              try {
-                await page.goto(url, { waitUntil: 'networkidle2', timeout: 120000 });
-              } catch (_) {}
-            }
-          }
-
           (async () => {
             fs.rmSync(outDir, { recursive: true, force: true });
             fs.mkdirSync(outDir, { recursive: true });
@@ -146,12 +137,6 @@ jobs:
             await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
             await new Promise((r) => setTimeout(r, 15000));
 
-            await forceFetch(page, [
-              '/service-worker.js',
-              '/resources/dia_en.txt',
-              '/resources/dia_de.txt'
-            ]);
-
             await browser.close();
 
             const indexPath = path.join(outDir, 'index.html');
@@ -184,6 +169,18 @@ jobs:
 
           node download.js kennedy light
           node download.js dark dark
+
+          for theme in light dark; do
+            mkdir -p "drawio-embed/$theme/resources"
+          done
+
+          curl -fsSL "https://embed.diagrams.net/service-worker.js" -o "drawio-embed/light/service-worker.js"
+          cp "drawio-embed/light/service-worker.js" "drawio-embed/dark/service-worker.js"
+
+          curl -fsSL "https://embed.diagrams.net/resources/dia_en.txt" -o "drawio-embed/light/resources/dia_en.txt"
+          curl -fsSL "https://embed.diagrams.net/resources/dia_de.txt" -o "drawio-embed/light/resources/dia_de.txt"
+          cp "drawio-embed/light/resources/dia_en.txt" "drawio-embed/dark/resources/dia_en.txt"
+          cp "drawio-embed/light/resources/dia_de.txt" "drawio-embed/dark/resources/dia_de.txt"
 
           mkdir -p drawio-embed/host
 
@@ -236,7 +233,6 @@ jobs:
               let msg;
               try { msg = JSON.parse(evt.data); } catch { return; }
               if (!msg || typeof msg !== 'object') return;
-
               if (msg.event === 'init') {
                 post('load', { xml: blankMxfile() });
               }
