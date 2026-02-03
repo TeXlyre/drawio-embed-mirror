@@ -119,7 +119,22 @@ jobs:
           EOF
 
           node download.js
-
+          
+      - name: Remove server-side integration files
+        run: |
+          cd drawio-embed
+          
+          echo "Removing cloud integration files..."
+          rm -f cache 2>/dev/null || true
+          rm -f github* 2>/dev/null || true
+          rm -f gitlab* 2>/dev/null || true
+          rm -f dropbox* 2>/dev/null || true
+          rm -f onedrive* 2>/dev/null || true
+          rm -f js/dropbox-sdk.min.js 2>/dev/null || true
+          rm -rf integrations/ 2>/dev/null || true
+          
+          echo "Remaining files: $(find . -type f | wc -l)"
+          
       - name: Create missing files
         run: |
           cd drawio-embed
