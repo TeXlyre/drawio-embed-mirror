@@ -172,13 +172,16 @@ jobs:
 
           for theme in light dark; do
             mkdir -p "drawio-embed/$theme/resources"
+
+            cat > "drawio-embed/$theme/service-worker.js" << 'EOF'
+            self.addEventListener('install', (e) => { self.skipWaiting(); });
+            self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
+            self.addEventListener('fetch', () => {});
+            EOF
           done
 
-          curl -fsSL "https://embed.diagrams.net/service-worker.js" -o "drawio-embed/light/service-worker.js"
-          cp "drawio-embed/light/service-worker.js" "drawio-embed/dark/service-worker.js"
-
-          curl -fsSL "https://embed.diagrams.net/resources/dia_en.txt" -o "drawio-embed/light/resources/dia_en.txt"
-          curl -fsSL "https://embed.diagrams.net/resources/dia_de.txt" -o "drawio-embed/light/resources/dia_de.txt"
+          curl -fsSL "https://raw.githubusercontent.com/jgraph/drawio/dev/src/main/webapp/resources/dia_en.txt" -o "drawio-embed/light/resources/dia_en.txt"
+          curl -fsSL "https://raw.githubusercontent.com/jgraph/drawio/dev/src/main/webapp/resources/dia_de.txt" -o "drawio-embed/light/resources/dia_de.txt"
           cp "drawio-embed/light/resources/dia_en.txt" "drawio-embed/dark/resources/dia_en.txt"
           cp "drawio-embed/light/resources/dia_de.txt" "drawio-embed/dark/resources/dia_de.txt"
 
