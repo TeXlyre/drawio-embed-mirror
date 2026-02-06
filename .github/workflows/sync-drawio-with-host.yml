@@ -2,8 +2,6 @@ name: Sync Draw.io Embed with Host
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 2 * * 0"
 
 permissions:
   contents: write
@@ -167,16 +165,23 @@ jobs:
           });
           EOF
 
-          node download.js kennedy light
-          node download.js dark dark
+          THEMES=("light:kennedy" "dark:dark")
+          for entry in "${THEMES[@]}"; do
+            IFS=: read -r theme ui <<< "$entry"
+            node download.js "$ui" "$theme"
+          done
 
           for theme in light dark; do
             mkdir -p "drawio-embed/$theme/resources"
+            
             cat > "drawio-embed/$theme/service-worker.js" <<'EOF'
           self.addEventListener('install', () => { self.skipWaiting(); });
           self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
           self.addEventListener('fetch', () => {});
           EOF
+
+            curl -fsSL -o "drawio-embed/$theme/shortcuts.svg" \
+              "https://raw.githubusercontent.com/jgraph/drawio/dev/src/main/webapp/shortcuts.svg"
           done
 
           python3 - <<'PY'
@@ -288,6 +293,7 @@ jobs:
             test -f "drawio-embed/$theme/app.html"
             test -f "drawio-embed/$theme/js/PreConfig.js"
             test -f "drawio-embed/$theme/service-worker.js"
+            test -f "drawio-embed/$theme/shortcuts.svg"
             test -f "drawio-embed/$theme/resources/dia_en.txt"
             test "$(ls -1 drawio-embed/$theme/resources/dia_*.txt 2>/dev/null | wc -l)" -ge 1
             echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files, $(ls -1 drawio-embed/$theme/resources/dia_*.txt 2>/dev/null | wc -l) languages)"
