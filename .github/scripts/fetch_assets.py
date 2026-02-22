@@ -51,10 +51,9 @@ if (
 for theme in THEMES[1:]:
     dest = f"drawio-embed/{theme}/resources"
     os.makedirs(dest, exist_ok=True)
-    for name, _ in dia_files:
-        src = os.path.join(primary_resources, name)
-        if os.path.exists(src):
-            shutil.copy2(src, os.path.join(dest, name))
+    for entry in os.scandir(primary_resources):
+        if entry.name.startswith("dia_") and entry.name.endswith(".txt"):
+            shutil.copy2(entry.path, os.path.join(dest, entry.name))
 
 primary_plugins = f"drawio-embed/{THEMES[0]}/plugins"
 fetch_dir(f"{REPO_API}/plugins?ref=dev", primary_plugins)

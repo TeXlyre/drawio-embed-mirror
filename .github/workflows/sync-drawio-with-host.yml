@@ -58,9 +58,9 @@ jobs:
               "drawio-embed/$theme/images/github-logo-white.svg"; do
               test -f "$file" || echo "MISSING: $file"
             done
-            count=$(ls -1 "drawio-embed/$theme/resources/dia_*.txt" 2>/dev/null | wc -l)
+            count=$(find "drawio-embed/$theme/resources" -name 'dia_*.txt' 2>/dev/null | wc -l)
             test "$count" -ge 1 || echo "MISSING: $theme dia_*.txt files (found $count)"
-            echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files, $(ls -1 drawio-embed/$theme/resources/dia_*.txt 2>/dev/null | wc -l) languages, $(ls -1 drawio-embed/$theme/plugins/*.js 2>/dev/null | wc -l) plugins)"
+            echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files, $count languages, $(find drawio-embed/$theme/plugins -name '*.js' 2>/dev/null | wc -l) plugins)"
           done
           test -f "drawio-embed/host/index.html" || echo "MISSING: host/index.html"
           echo "✓ host ready"
