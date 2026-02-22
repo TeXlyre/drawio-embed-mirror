@@ -1,0 +1,133 @@
+const puppeteer = require('puppeteer');
+const fs = require('fs');
+const path = require('path');
+
+const BASE = 'https://embed.diagrams.net';
+const ui = process.argv[2];
+const outName = process.argv[3];
+const outDir = path.join(process.argv[4] || process.cwd(), 'drawio-embed', outName);
+
+const downloaded = new Set();
+
+function relPathFromUrl(url) {
+  const u = new URL(url);
+  let p = u.pathname;
+  if (p === '/' || !p) p = '/index.html';
+  return p.replace(/^\//, '');
+}
+
+function safeWrite(filePath, data) {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(filePath, data);
+}
+
+function ensureStubs(themeDir) {
+  const jsDir = path.join(themeDir, 'js');
+  fs.mkdirSync(jsDir, { recursive: true });
+
+  const pre = path.join(jsDir, 'PreConfig.js');
+  if (!fs.existsSync(pre)) {
+    fs.writeFileSync(pre, 'window.DRAWIO_CONFIG = window.DRAWIO_CONFIG || {};\n');
+  }
+
+  const post = path.join(jsDir, 'PostConfig.js');
+  if (!fs.existsSync(post)) {
+    fs.writeFileSync(post, '\n');
+  }
+}
+
+function patchAppHtml(themeDir) {
+  const appPath = path.join(themeDir, 'app.html');
+  if (!fs.existsSync(appPath)) return;
+
+  let html = fs.readFileSync(appPath, 'utf8');
+
+  if (!/<base\s/i.test(html)) {
+    html = html.replace(/<head([^>]*)>/i, '<head$1>\n<base href="./">');
+  }
+
+  html = html.replace(/\b(src|href)="\/(?!\/)/g, '$1="./');
+
+  fs.writeFileSync(appPath, html);
+}
+
+(async () => {
+  fs.rmSync(outDir, { recursive: true, force: true });
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage'
+    ]
+  });
+
+  const page = await browser.newPage();
+
+  page.on('response', async (response) => {
+    try {
+      const url = response.url();
+      if (!url.startsWith(BASE)) return;
+      if (downloaded.has(url)) return;
+
+      const status = response.status();
+      if (status < 200 || status >= 300) return;
+
+      downloaded.add(url);
+
+      const relPath = relPathFromUrl(url);
+      const fullPath = path.join(outDir, relPath);
+
+      let buffer = Buffer.alloc(0);
+      try {
+        buffer = await response.buffer();
+      } catch (_) {
+        buffer = Buffer.alloc(0);
+      }
+
+      safeWrite(fullPath, buffer);
+      process.stdout.write(`✓ ${relPath}\n`);
+    } catch (_) {}
+  });
+
+  const params =
+    `embed=1&proto=json&spin=1&libraries=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1` +
+    `&db=0&od=0&gapi=0&tr=0&gh=0&gl=0&stealth=1&offline=1&ui=${encodeURIComponent(ui)}`;
+
+  const url = `${BASE}/?${params}`;
+  process.stdout.write(`\nLoading: ${url}\n\n`);
+
+  await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
+  await new Promise((r) => setTimeout(r, 15000));
+
+  await browser.close();
+
+  const indexPath = path.join(outDir, 'index.html');
+  const appPath = path.join(outDir, 'app.html');
+
+  if (!fs.existsSync(indexPath)) {
+    throw new Error(`${outName}/index.html missing after download`);
+  }
+
+  fs.renameSync(indexPath, appPath);
+
+  const redirectHtml =
+    `<!doctype html><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<title>drawio-embed</title>` +
+    `<script>location.replace("app.html?${params}");</script>` +
+    `<noscript><a href="app.html?${params}">Open</a></noscript>`;
+
+  safeWrite(indexPath, redirectHtml);
+
+  ensureStubs(outDir);
+  patchAppHtml(outDir);
+
+  process.stdout.write(`\n${outName}: Downloaded ${downloaded.size} files\n`);
+})().catch((err) => {
+  process.stderr.write(`Error: ${err && err.stack ? err.stack : err}\n`);
+  process.exit(1);
+});
