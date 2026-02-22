@@ -46,19 +46,23 @@ jobs:
       - name: Verify
         run: |
           for theme in light dark; do
-            test -f "drawio-embed/$theme/index.html"
-            test -f "drawio-embed/$theme/app.html"
-            test -f "drawio-embed/$theme/js/PreConfig.js"
-            test -f "drawio-embed/$theme/service-worker.js"
-            test -f "drawio-embed/$theme/shortcuts.svg"
-            test -f "drawio-embed/$theme/resources/dia_en.txt"
-            test "$(ls -1 drawio-embed/$theme/resources/dia_*.txt 2>/dev/null | wc -l)" -ge 1
-            test -f "drawio-embed/$theme/plugins/text.js"
-            test -f "drawio-embed/$theme/images/github-logo.svg"
-            test -f "drawio-embed/$theme/images/github-logo-white.svg"
+            for file in \
+              "drawio-embed/$theme/index.html" \
+              "drawio-embed/$theme/app.html" \
+              "drawio-embed/$theme/js/PreConfig.js" \
+              "drawio-embed/$theme/service-worker.js" \
+              "drawio-embed/$theme/shortcuts.svg" \
+              "drawio-embed/$theme/resources/dia_en.txt" \
+              "drawio-embed/$theme/plugins/text.js" \
+              "drawio-embed/$theme/images/github-logo.svg" \
+              "drawio-embed/$theme/images/github-logo-white.svg"; do
+              test -f "$file" || echo "MISSING: $file"
+            done
+            count=$(ls -1 "drawio-embed/$theme/resources/dia_*.txt" 2>/dev/null | wc -l)
+            test "$count" -ge 1 || echo "MISSING: $theme dia_*.txt files (found $count)"
             echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files, $(ls -1 drawio-embed/$theme/resources/dia_*.txt 2>/dev/null | wc -l) languages, $(ls -1 drawio-embed/$theme/plugins/*.js 2>/dev/null | wc -l) plugins)"
           done
-          test -f "drawio-embed/host/index.html"
+          test -f "drawio-embed/host/index.html" || echo "MISSING: host/index.html"
           echo "✓ host ready"
 
       - name: Commit
