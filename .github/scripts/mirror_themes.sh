@@ -3,14 +3,13 @@ set -euo pipefail
 
 WORKSPACE="${1:-$(pwd)}"
 
-declare -A THEMES=(["light"]="kennedy" ["dark"]="dark")
-
-for theme in "${!THEMES[@]}"; do
-  ui="${THEMES[$theme]}"
+for entry in "light:kennedy" "dark:dark"; do
+  IFS=: read -r theme ui <<< "$entry"
   node "$WORKSPACE/.github/scripts/download.js" "$ui" "$theme" "$WORKSPACE"
 done
 
-for theme in "${!THEMES[@]}"; do
+for entry in "light:kennedy" "dark:dark"; do
+  IFS=: read -r theme _ <<< "$entry"
   mkdir -p "$WORKSPACE/drawio-embed/$theme/resources"
 
   cat > "$WORKSPACE/drawio-embed/$theme/service-worker.js" <<'EOF'
