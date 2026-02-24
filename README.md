@@ -14,7 +14,6 @@ This repository provides a self-hosted mirror of the Draw.io embed application, 
 
 ## Sync Schedule
 
-- **Automatic**: Weekly on Sundays at 2:00 AM UTC
 - **Manual**: Can be triggered via GitHub Actions "Run workflow" button
 
 ## Usage
