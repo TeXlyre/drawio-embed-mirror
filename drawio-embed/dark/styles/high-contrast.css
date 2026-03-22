@@ -76,3 +76,53 @@ button:not(:hover), .geBtn:not(:hover) {
 .geHint {
 	font-size: 11pt;
 }
+
+/* Dialogs: restore solid backgrounds and visible borders */
+.geDialog {
+	background-color: light-dark(#ffffff, var(--ge-dark-panel-color)) !important;
+	border: 1px solid light-dark(#000000, #FFFFFF) !important;
+	box-shadow: none !important;
+}
+
+html body.geDarkMode .geDialog,
+html body.geDarkMode div.mxWindow,
+html body div.mxWindow.geDarkMode {
+	background-color: var(--ge-dark-panel-color) !important;
+	border-color: #FFFFFF !important;
+	box-shadow: none !important;
+}
+
+.geDialog,
+html div.mxWindow {
+	box-shadow: none !important;
+}
+
+/* Dialog overlay: solid opaque background */
+.geBackground {
+	background-color: light-dark(#ffffff, #000000) !important;
+	opacity: 0.9 !important;
+	backdrop-filter: none !important;
+}
+
+/* Dialog close button: full opacity for visibility */
+.geDialog > .geButton {
+	opacity: 1 !important;
+}
+
+/* Dialog title and footer: solid visible borders */
+.geDialogTitle {
+	border-bottom: 1px solid light-dark(#000000, #FFFFFF) !important;
+}
+
+.geDialogFooter {
+	border-top: 1px solid light-dark(#000000, #FFFFFF) !important;
+}
+
+/* Input fields: solid visible borders */
+.geDialog input[type="text"],
+.geDialog input[type="number"],
+.geDialog textarea,
+.geDialog select {
+	border: 1px solid light-dark(#000000, #FFFFFF) !important;
+	background-color: light-dark(#ffffff, #000000) !important;
+}
