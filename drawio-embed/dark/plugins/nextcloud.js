@@ -464,7 +464,7 @@ Draw.loadPlugin(function(ui)
      */
     EmbedFile.prototype.setDescriptor = function(desc)
     {
-        this.desc = desc;
+        this.desc = desc || {};
     };
 
     /**
