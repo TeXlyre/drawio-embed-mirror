@@ -1709,7 +1709,7 @@ a.geStatus>div {
 }
 
 .geFormatSection {
-	padding: 8px 0 10px 0;
+	padding: 6px 0;
 	position: relative;
 	white-space: nowrap;
 	border-top: 1px solid light-dark(#e0e0e0, #3a3a3a);
@@ -2038,6 +2038,15 @@ a.geStatus>div {
 	box-sizing: border-box;
 }
 
+/* Tall dialogs: cap the content area to the dialog's content box and let
+   it scroll. The close button (.geButton) is a positioned-absolute sibling
+   of the content so it stays at the top-right regardless of scroll. */
+.geDialog > :first-child {
+	max-height: 100%;
+	overflow-y: auto;
+	box-sizing: border-box;
+}
+
 .geDialog > .geButton {
 	top: 8px !important;
 	right: 8px !important;
@@ -2100,6 +2109,7 @@ a.geStatus>div {
 	display: flex;
 	align-items: center;
 	min-height: 28px;
+	column-gap: 8px;
 }
 
 .geDialogFormRow + .geDialogFormRow {
@@ -2115,7 +2125,6 @@ a.geStatus>div {
 }
 
 .geDialogFormLabel {
-	font-size: 13px;
 	color: light-dark(#1d1d1f, #e0e0e0);
 	min-width: 100px;
 	flex-shrink: 0;
@@ -2150,7 +2159,6 @@ a.geStatus>div {
 }
 
 .geDialogCheckRow label {
-	font-size: 13px;
 	color: light-dark(#1d1d1f, #e0e0e0);
 	cursor: pointer;
 }
@@ -2175,9 +2183,12 @@ a.geStatus>div {
 	min-width: 0;
 }
 
+.geDialog .geCollapsibleTitle {
+	margin-top: 4px;
+}
+
 .geDialogInlineField label {
-	font-size: 13px;
-	color: light-dark(#6e6e73, #a0a0a0);
+	color: light-dark(#1d1d1f, #e0e0e0);
 	white-space: nowrap;
 }
 
