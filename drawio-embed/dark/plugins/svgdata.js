@@ -3,21 +3,31 @@
  * Copyright (c) 2020-2025, draw.io AG
  */
 /**
- * Sample plugin.
+ * Backwards-compatible SVG export with rich cell metadata.
+ *
+ * Core supports a "data-only" mode via createSvgImageExport's addSvgData
+ * argument that emits data-meta-{attr} on the wrapper group (the new,
+ * collision-free format used by the SVG export dialog and the JSON
+ * protocol's embedCellMetadata option).
+ *
+ * This plugin restores the legacy svgdata format byte-for-byte: the
+ * wrapper group gets unprefixed data-{attr} (only on root/layer cells)
+ * along with id="cell-X", content, type=root|layer, and each painted
+ * shape is wrapped in an inner <g id="cell-X" content data-* type=
+ * vertex|edge> group. Anything parsing the old output continues to work.
  */
-Draw.loadPlugin(function(ui) {
-
-	/**
-	 * Overrides SVG export to add metadata for each cell.
-	 */
+Draw.loadPlugin(function(ui)
+{
 	var graphCreateSvgImageExport = Graph.prototype.createSvgImageExport;
 
-	Graph.prototype.createSvgImageExport = function()
+	Graph.prototype.createSvgImageExport = function(includeCellId)
 	{
-		var exp = graphCreateSvgImageExport.apply(this, arguments);
+		// Don't enable the new core data-meta- mode — emit the legacy unprefixed
+		// data-{attr} so existing consumers of the plugin's output keep working.
+		var exp = graphCreateSvgImageExport.call(this, includeCellId);
 		var graph = this;
 
-		// Adds metadata for root and layer cells
+		// Tag root and layer wrappers with id, content, data-{attr}, type
 		var expAddCellData = exp.addCellData;
 
 		exp.addCellData = function(cell, group, includeValue)
@@ -48,24 +58,25 @@ Draw.loadPlugin(function(ui) {
 			return group;
 		};
 
-		// Overrides rendering to add metadata
+		// Wrap each painted cell shape in an inner <g id="cell-X" ...>
 		var expDrawCellState = exp.drawCellState;
 
 		exp.drawCellState = function(state, canvas)
 		{
 			var svgDoc = canvas.root.ownerDocument;
 			var g = (svgDoc.createElementNS != null) ?
-					svgDoc.createElementNS(mxConstants.NS_SVG, 'g') : svgDoc.createElement('g');
+				svgDoc.createElementNS(mxConstants.NS_SVG, 'g') :
+				svgDoc.createElement('g');
 			g.setAttribute('id', 'cell-' + state.cell.id);
 
-			// Temporary replaces root for content rendering
+			// Temporarily replaces root for content rendering
 			var prev = canvas.root;
 			prev.appendChild(g);
 			canvas.root = g;
 
 			expDrawCellState.apply(this, arguments);
 
-			// Adds metadata if group is not empty
+			// Drop empty wrappers; otherwise enrich with metadata
 			if (g.firstChild == null)
 			{
 				g.parentNode.removeChild(g);
@@ -80,7 +91,6 @@ Draw.loadPlugin(function(ui) {
 					g.setAttribute('data-' + attrib.name, attrib.value);
 				}
 
-				// Adds type attribute
 				g.setAttribute('type', graph.model.isEdge(state.cell) ? 'edge' : 'vertex');
 			}
 
@@ -90,5 +100,4 @@ Draw.loadPlugin(function(ui) {
 
 		return exp;
 	};
-
 });

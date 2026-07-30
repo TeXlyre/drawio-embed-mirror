@@ -236,6 +236,32 @@ catch (e)
     // ignored
 }
 
+// Release channel: ?channel=stable pins this browser to the stable channel
+// before any login (enterprise onboarding link), ?channel=beta clears the
+// pin (the next daily login check of a listed domain switches it back).
+// Stored here so the service worker registration in App.main sees it on
+// this same load.
+if (isLocalStorage && urlParams['channel'] != null)
+{
+    try
+    {
+        if (urlParams['channel'] == 'stable')
+        {
+            localStorage.setItem('.drawio-channel', 'stable');
+        }
+        else if (urlParams['channel'] == 'beta')
+        {
+            localStorage.removeItem('.drawio-channel');
+        }
+
+        localStorage.removeItem('.drawio-channel-ts');
+    }
+    catch (e)
+    {
+        // ignored
+    }
+}
+
 var mxScriptsLoaded = false, mxWinLoaded = false;
 
 function checkAllLoaded()
@@ -282,8 +308,14 @@ if (urlParams['dev'] == '1')
     {
         mxscript('js/desktop/DesktopLibrary.js');
         mxscript('js/desktop/ElectronApp.js');
+
+        // ELK, Mermaid and PlantUML are loaded by Devel.js above. Do not
+        // load js/elk/drawio-elk.min.js again here: re-running its footer
+        // (var ElkLayout = ELK.ElkLayout) replaces the class after the
+        // ElkLayout.js editor statics have attached, breaking Arrange >
+        // Layout with "ElkLayout.runWithDialog is not a function".
     }
-    
+
     mxscript(drawDevUrl + 'js/PostConfig.js');
 }
 else
@@ -316,7 +348,22 @@ else
                                 {
                                     mxscript('js/shapes-14-6-5.min.js', function()
                                     {
-                                        mxscript('js/PostConfig.js');
+                                        // ELK and Mermaid ship inside extensions.min.js
+                                        // above (elk bundle, then the ElkLayout editor
+                                        // statics, then mermaid). Loading
+                                        // js/elk/drawio-elk.min.js again would re-run its
+                                        // footer (var ElkLayout = ELK.ElkLayout) and swap
+                                        // in a bare class without the statics, breaking
+                                        // Arrange > Layout with "ElkLayout.runWithDialog
+                                        // is not a function" [jgraph/drawio-desktop#2471].
+                                        // Only PlantUML is not in extensions.min.js; it
+                                        // is preloaded here and EditorUi.loadPlantUml
+                                        // skips its own load once mxPlantUmlToDrawio is
+                                        // defined.
+                                        mxscript('js/plantuml/drawio-plantuml.min.js', function()
+                                        {
+                                            mxscript('js/PostConfig.js');
+                                        });
                                     });
                                 });
                             });
