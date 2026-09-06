@@ -2,6 +2,10 @@ import json, os, sys, urllib.request, shutil
 
 REPO_API = "https://api.github.com/repos/jgraph/drawio/contents/src/main/webapp"
 HEADERS = {"Accept": "application/vnd.github+json", "User-Agent": "gh-actions"}
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+if GITHUB_TOKEN:
+    HEADERS["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+
 THEMES = ("light", "dark")
 
 def gh_get(api_url):

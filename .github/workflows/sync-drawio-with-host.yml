@@ -28,6 +28,8 @@ jobs:
         run: npm install --no-save puppeteer
 
       - name: Mirror embed app
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           bash .github/scripts/mirror_themes.sh "$GITHUB_WORKSPACE"
           python3 .github/scripts/fetch_assets.py
