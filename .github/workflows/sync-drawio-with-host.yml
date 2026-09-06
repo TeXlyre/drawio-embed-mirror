@@ -32,8 +32,21 @@ jobs:
           bash .github/scripts/mirror_themes.sh "$GITHUB_WORKSPACE"
           python3 .github/scripts/fetch_assets.py
 
+          LIGHT_VERSION="$(cat drawio-embed/light/VERSION)"
+          DARK_VERSION="$(cat drawio-embed/dark/VERSION)"
+
+          if [ "$LIGHT_VERSION" != "$DARK_VERSION" ]; then
+            echo "Draw.io version mismatch: light=$LIGHT_VERSION dark=$DARK_VERSION"
+            exit 1
+          fi
+
+          DRAWIO_VERSION="${LIGHT_VERSION#v}"
+          echo "DRAWIO_VERSION=$DRAWIO_VERSION" >> "$GITHUB_ENV"
+          echo "Detected Draw.io v$DRAWIO_VERSION"
+
           cat > drawio-embed/VERSION.txt << EOF
           Draw.io Embed Mirror
+          Version: ${DRAWIO_VERSION}
           Synced: $(date -u)
           Light files: $(find drawio-embed/light -type f 2>/dev/null | wc -l)
           Dark files: $(find drawio-embed/dark -type f 2>/dev/null | wc -l)
@@ -55,14 +68,15 @@ jobs:
               "drawio-embed/$theme/resources/dia_en.txt" \
               "drawio-embed/$theme/plugins/text.js" \
               "drawio-embed/$theme/images/github-logo.svg" \
-              "drawio-embed/$theme/images/github-logo-white.svg"; do
-              test -f "$file" || echo "MISSING: $file"
+              "drawio-embed/$theme/images/github-logo-white.svg" \
+              "drawio-embed/$theme/VERSION"; do
+              test -f "$file" || (echo "MISSING: $file" && exit 1)
             done
             count=$(find "drawio-embed/$theme/resources" -name 'dia_*.txt' 2>/dev/null | wc -l)
-            test "$count" -ge 1 || echo "MISSING: $theme dia_*.txt files (found $count)"
+            test "$count" -ge 1 || (echo "MISSING: $theme dia_*.txt files (found $count)" && exit 1)
             echo "✓ $theme theme ready ($(find drawio-embed/$theme -type f | wc -l) files, $count languages, $(find drawio-embed/$theme/plugins -name '*.js' 2>/dev/null | wc -l) plugins)"
           done
-          test -f "drawio-embed/host/index.html" || echo "MISSING: host/index.html"
+          test -f "drawio-embed/host/index.html" || (echo "MISSING: host/index.html" && exit 1)
           echo "✓ host ready"
 
       - name: Commit
@@ -70,16 +84,48 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add drawio-embed/
-          git diff --staged --quiet || git commit -m "Update $(date +%Y-%m-%d)"
+          git diff --staged --quiet || git commit -m "Update Draw.io embed v${DRAWIO_VERSION}"
           git push || true
 
-      - name: Deploy
-        uses: actions/configure-pages@v4
+      - name: Create release zip
+        run: |
+          ZIP_PATH="drawio-embed-v${DRAWIO_VERSION}.zip"
+          zip -r "$ZIP_PATH" drawio-embed
+          echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
 
-      - name: Upload
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: drawio-embed
+          path: |
+            drawio-embed
+            ${{ env.ZIP_PATH }}
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: drawio-embed
 
       - name: Deploy Pages
+        id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Publish GitHub release for new Draw.io version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${DRAWIO_VERSION}"
+
+          if gh release view "$TAG" \
+              --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+          else
+            gh release create "$TAG" "$ZIP_PATH" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target main \
+              --title "Draw.io $TAG" \
+              --notes "Static Draw.io embed asset for TeXlyre. Mirrored from embed.diagrams.net version ${DRAWIO_VERSION}."
+          fi

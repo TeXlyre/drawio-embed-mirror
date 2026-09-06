@@ -103,6 +103,14 @@ function patchAppHtml(themeDir) {
   await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
   await new Promise((r) => setTimeout(r, 15000));
 
+  await page.waitForFunction(
+    () => typeof window.EditorUi !== 'undefined' && window.EditorUi.VERSION,
+    { timeout: 30000 }
+  );
+
+  const drawioVersion = await page.evaluate(() => window.EditorUi.VERSION);
+  process.stdout.write(`Draw.io version: ${drawioVersion}\n`);
+
   await browser.close();
 
   const indexPath = path.join(outDir, 'index.html');
@@ -125,6 +133,7 @@ function patchAppHtml(themeDir) {
 
   ensureStubs(outDir);
   patchAppHtml(outDir);
+  safeWrite(path.join(outDir, 'VERSION'), `${drawioVersion}\n`);
 
   process.stdout.write(`\n${outName}: Downloaded ${downloaded.size} files\n`);
 })().catch((err) => {
