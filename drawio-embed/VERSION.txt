@@ -1,9 +1,9 @@
 Draw.io Embed Mirror
-Version: 31.4.4
-Synced: Sun Sep  6 15:33:51 UTC 2026
-Light files: 116
-Dark files: 116
+Version: 31.6.1
+Synced: Wed Sep 30 13:50:34 UTC 2026
+Light files: 107
+Dark files: 107
 Light languages: 59
 Dark languages: 59
-Light plugins: 20
-Dark plugins: 20
+Light plugins: 19
+Dark plugins: 19
